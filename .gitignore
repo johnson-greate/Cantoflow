@@ -1,0 +1,11 @@
+# Local secrets
+pat2-2026.txt
+
+# Local artifacts
+poc/.out/
+
+# Third-party source and models (download/build locally)
+third_party/
+
+# macOS
+.DS_Store

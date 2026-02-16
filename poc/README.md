@@ -4,7 +4,7 @@
 
 1. 錄音（mic）
 2. 本地 whisper.cpp 做廣東話轉錄
-3. （可選）用 Anthropic 做文字整理
+3. （可選）用 OpenAI / Anthropic 做文字整理
 4. 將結果 copy 去 clipboard（`pbcopy`）
 
 > 呢個版本刻意唔做 AX 自動插字、唔做 menu bar app，純 CLI proof。
@@ -35,23 +35,45 @@ cmake -B build
 cmake --build build -j
 ```
 
-## 2) 準備 model（先用 small）
+## 2) 準備 model（建議 large-v3）
 
-你可以先用 official `small`，再之後換 cantonese fine-tune。
+建議先下載 `large-v3`（粵語效果通常比 small 穩定），disk 會大啲。
 
 ```bash
 cd third_party/whisper.cpp
-bash ./models/download-ggml-model.sh small
+bash ./models/download-ggml-model.sh large-v3
 ```
 
 假設 model 路徑：
 
-`third_party/whisper.cpp/models/ggml-small.bin`
+`third_party/whisper.cpp/models/ggml-large-v3.bin`
 
-## 3) （可選）設定 Anthropic API key
+如果你想保留輕量 fallback：
 
 ```bash
-export ANTHROPIC_API_KEY="your_key_here"
+bash ./models/download-ggml-model.sh small
+```
+
+## 3) （可選）設定 LLM API key（OpenAI 優先）
+
+```bash
+export OPENAI_API_KEY="your_key_here"
+# or:
+# export ANTHROPIC_API_KEY="your_key_here"
+```
+
+Provider 選擇規則：
+
+- `POLISH_PROVIDER=auto`（預設）：有 `OPENAI_API_KEY` 就用 OpenAI，否則用 Anthropic
+- `POLISH_PROVIDER=openai|anthropic`：手動指定 provider
+
+可選 model：
+
+```bash
+export OPENAI_MODEL="gpt-4o-mini"
+export ANTHROPIC_MODEL="claude-sonnet-4-5-20250929"
+# 或用單一覆蓋：
+export POLISH_MODEL="gpt-4o-mini"
 ```
 
 ## 4) Run POC
@@ -61,8 +83,11 @@ export ANTHROPIC_API_KEY="your_key_here"
 ```bash
 chmod +x poc/run_poc.sh poc/polish_text.sh
 ./poc/run_poc.sh \
-  --seconds 8 \
-  --model ./third_party/whisper.cpp/models/ggml-small.bin \
+  --seconds 12 \
+  --audio-device "MacBook Air Microphone" \
+  --precheck-seconds 1 \
+  --countdown-seconds 2 \
+  --model ./third_party/whisper.cpp/models/ggml-large-v3.bin \
   --whisper ./third_party/whisper.cpp/build/bin/whisper-cli
 ```
 
@@ -72,6 +97,31 @@ chmod +x poc/run_poc.sh poc/polish_text.sh
   - raw transcript
   - polished transcript（如果有 API key）
 - 最終文字會自動 `pbcopy`，你可以去任何 app `Cmd+V` 貼上。
+
+如果你部機有多個 input device，建議固定內置 mic：
+
+```bash
+./poc/run_poc.sh --audio-device "MacBook Air Microphone"
+```
+
+建議保持 precheck 開啟（預設會先做 1 秒 input level check）：
+
+```bash
+./poc/run_poc.sh --precheck-seconds 1
+```
+
+normalize 亦建議保持開啟（預設啟用）；如要關：
+
+```bash
+./poc/run_poc.sh --no-normalize
+```
+
+如果你想對特定詞做 bias（例如地名、人名），可以覆蓋 STT prompt：
+
+```bash
+./poc/run_poc.sh \
+  --stt-prompt "以下係廣東話句子，請以繁體中文輸出。常見香港地名：銅鑼灣、維園、中環、尖沙咀。"
+```
 
 ## 6) Why this is useful
 
@@ -87,4 +137,3 @@ chmod +x poc/run_poc.sh poc/polish_text.sh
 - AX auto insertion
 - hotkey/menu bar/setting UI
 - Keychain / permission UX
-
