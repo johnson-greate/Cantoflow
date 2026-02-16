@@ -35,16 +35,22 @@ cmake -B build
 cmake --build build -j
 ```
 
-## 2) 準備 model（建議 large-v3）
+## 2) 準備 model（建議先裝 fast + balanced）
 
-建議先下載 `large-v3`（粵語效果通常比 small 穩定），disk 會大啲。
+建議先下載兩個：
+
+- `large-v3-turbo`（快，for Fast IME）
+- `large-v3`（準，for balanced）
 
 ```bash
 cd third_party/whisper.cpp
+bash ./models/download-ggml-model.sh large-v3-turbo
 bash ./models/download-ggml-model.sh large-v3
 ```
 
 假設 model 路徑：
+
+`third_party/whisper.cpp/models/ggml-large-v3-turbo.bin`
 
 `third_party/whisper.cpp/models/ggml-large-v3.bin`
 
@@ -84,10 +90,12 @@ export POLISH_MODEL="gpt-4o-mini"
 chmod +x poc/run_poc.sh poc/polish_text.sh
 ./poc/run_poc.sh \
   --seconds 12 \
+  --stt-profile fast \
+  --fast-ime \
+  --auto-paste \
   --audio-device "MacBook Air Microphone" \
   --precheck-seconds 1 \
   --countdown-seconds 2 \
-  --model ./third_party/whisper.cpp/models/ggml-large-v3.bin \
   --whisper ./third_party/whisper.cpp/build/bin/whisper-cli
 ```
 
@@ -96,7 +104,10 @@ chmod +x poc/run_poc.sh poc/polish_text.sh
 - 終端會顯示：
   - raw transcript
   - polished transcript（如果有 API key）
+  - latency summary（precheck/record/normalize/stt/polish/total）
 - 最終文字會自動 `pbcopy`，你可以去任何 app `Cmd+V` 貼上。
+- 開 `--fast-ime` 時會先插 raw，再嘗試以 polished 覆蓋
+- 每次 run 會 append telemetry 到：`poc/.out/telemetry.jsonl`
 
 如果你部機有多個 input device，建議固定內置 mic：
 
@@ -116,11 +127,52 @@ normalize 亦建議保持開啟（預設啟用）；如要關：
 ./poc/run_poc.sh --no-normalize
 ```
 
+STT profile（唔指定 `--model` 時生效）：
+
+```bash
+./poc/run_poc.sh --stt-profile fast      # 優先 large-v3-turbo，否則 large-v3
+./poc/run_poc.sh --stt-profile balanced  # 優先 large-v3（預設）
+./poc/run_poc.sh --stt-profile accurate  # 目前同 balanced
+```
+
+Fast IME mode：
+
+```bash
+./poc/run_poc.sh --fast-ime --auto-paste
+```
+
+可選：
+
+```bash
+./poc/run_poc.sh --fast-ime --auto-paste --no-auto-replace
+```
+
 如果你想對特定詞做 bias（例如地名、人名），可以覆蓋 STT prompt：
 
 ```bash
 ./poc/run_poc.sh \
   --stt-prompt "以下係廣東話句子，請以繁體中文輸出。常見香港地名：銅鑼灣、維園、中環、尖沙咀。"
+```
+
+Telemetry options：
+
+```bash
+./poc/run_poc.sh --no-telemetry
+./poc/run_poc.sh --telemetry-file ./poc/.out/telemetry.jsonl
+```
+
+快速睇平均 latency（毫秒）：
+
+```bash
+jq -s '
+  {
+    runs: length,
+    avg_total_ms: (map(.latency_ms.total) | add / length),
+    avg_first_insert_ms: (map(.latency_ms.first_insert) | add / length),
+    avg_stt_ms: (map(.latency_ms.stt) | add / length),
+    avg_polish_ms: (map(.latency_ms.polish) | add / length)
+  }
+' ./poc/.out/telemetry.jsonl
 ```
 
 ## 6) Why this is useful
