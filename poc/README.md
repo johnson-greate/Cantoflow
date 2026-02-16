@@ -189,3 +189,39 @@ jq -s '
 - AX auto insertion
 - hotkey/menu bar/setting UI
 - Keychain / permission UX
+
+## 7) Light UI (Menu Bar + Fn Toggle)
+
+如果你想唔用 CLI、直接試「類輸入法」流程，可以用 light UI：
+
+```bash
+chmod +x ./poc/run_light_ui.sh
+./poc/run_light_ui.sh
+```
+
+操作：
+
+1. Menu Bar 會見到 mic icon + `CantoFlow`
+2. 按一次 `Fn`（Globe）開始錄音
+3. 再按一次 `Fn` 停止錄音，之後自動做 STT + LLM polish
+4. （預設）Fast IME：先插 raw，再嘗試用 polished 覆蓋
+
+必要權限（第一次會提示）：
+
+- Microphone
+- Accessibility（為自動貼上 / 取代）
+- Input Monitoring（為全域 Fn key 監聽）
+- Automation（允許控制 `System Events`）
+
+如果你發現 `Fn` 被系統功能搶走，請去 macOS 鍵盤設定停用相關 Fn 單擊功能後再試。
+
+Light UI telemetry：
+
+- Pipeline sub-task latency：`poc/.out/telemetry.jsonl`
+- UI session latency（recording / pipeline / exit code）：`poc/.out/light_ui_telemetry.jsonl`
+
+快速睇最近一次 UI run：
+
+```bash
+tail -n 1 ./poc/.out/light_ui_telemetry.jsonl | jq
+```
