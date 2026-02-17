@@ -67,15 +67,28 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         menu.addItem(toggle)
         toggleItem = toggle
 
+        menu.addItem(NSMenuItem.separator())
+
+        let manageVocab = NSMenuItem(title: "Manage Vocabulary...", action: #selector(openVocabularySettings), keyEquivalent: ",")
+        manageVocab.target = self
+        menu.addItem(manageVocab)
+
         let openOut = NSMenuItem(title: "Open Output Folder", action: #selector(openOutputFolder), keyEquivalent: "")
         openOut.target = self
         menu.addItem(openOut)
 
         menu.addItem(NSMenuItem.separator())
 
-        let quit = NSMenuItem(title: "Quit CantoFlow_c", action: #selector(quitApp), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "Quit CantoFlow", action: #selector(quitApp), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
+
+        // Version info (disabled, for display only)
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+        let versionItem = NSMenuItem(title: "Version \(version) (\(build))", action: nil, keyEquivalent: "")
+        versionItem.isEnabled = false
+        menu.addItem(versionItem)
     }
 
     // MARK: - UI Updates
@@ -162,6 +175,10 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         NSWorkspace.shared.open(config.outDir)
     }
 
+    @objc private func openVocabularySettings() {
+        VocabularySettingsWindow.shared.showWindow()
+    }
+
     @objc private func quitApp() {
         NSApp.terminate(nil)
     }
@@ -198,6 +215,11 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         guard state == .idle else { return }
 
         do {
+            // Set up audio level callback for waveform visualization BEFORE starting
+            pipeline.onAudioLevelUpdate = { [weak self] level in
+                self?.overlayPanel?.updateAudioLevel(level)
+            }
+
             try pipeline.startRecording()
             state = .recording
             showRecordingOverlay()

@@ -61,6 +61,13 @@ final class STTPipeline {
     private var recordingStartTime: Date?
     private var currentRecordingURL: URL?
 
+    /// Callback for real-time audio level updates (for waveform visualization)
+    var onAudioLevelUpdate: ((Float) -> Void)? {
+        didSet {
+            audioCapture.onAudioLevelUpdate = onAudioLevelUpdate
+        }
+    }
+
     init(config: AppConfig) {
         self.config = config
         self.whisperRunner = WhisperRunner(config: config)
@@ -204,9 +211,12 @@ final class STTPipeline {
             }
         }
 
-        // If not in fast IME mode, copy final text to clipboard
+        // If not in fast IME mode, insert final text directly
         if !config.fastIME {
-            _ = textInserter.insertViaClipboard(text: finalText)
+            let insertResult = textInserter.insertViaClipboard(text: finalText)
+            if !insertResult.success {
+                print("Warning: Failed to auto-insert text, copied to clipboard instead")
+            }
         }
 
         // Log telemetry

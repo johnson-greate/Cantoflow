@@ -27,6 +27,9 @@ final class AudioCapture {
     private var isRecording = false
     private var recordingURL: URL?
 
+    /// Callback for real-time audio level updates (normalized 0.0 to 1.0)
+    var onAudioLevelUpdate: ((Float) -> Void)?
+
     /// Target format for whisper: 16kHz mono PCM
     static let targetSampleRate: Double = 16000
     static let targetChannels: AVAudioChannelCount = 1
@@ -108,6 +111,25 @@ final class AudioCapture {
         // Install tap on input node
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
             guard let self = self, let audioFile = self.audioFile else { return }
+
+            // Calculate audio level for waveform visualization
+            if let channelData = buffer.floatChannelData?[0] {
+                let frameLength = Int(buffer.frameLength)
+                var sum: Float = 0
+                for i in 0..<frameLength {
+                    sum += channelData[i] * channelData[i]
+                }
+                let rms = sqrt(sum / Float(frameLength))
+
+                // Apply sensitivity boost and non-linear scaling for better UI response
+                // Normal speech should fill 60-80% of the bar
+                let boosted = pow(rms * 8.0, 0.5)  // Boost and apply sqrt for better dynamic range
+                let normalized = min(1.0, max(0.0, boosted))
+
+                DispatchQueue.main.async {
+                    self.onAudioLevelUpdate?(normalized)
+                }
+            }
 
             // Convert buffer to target format
             let frameCount = AVAudioFrameCount(

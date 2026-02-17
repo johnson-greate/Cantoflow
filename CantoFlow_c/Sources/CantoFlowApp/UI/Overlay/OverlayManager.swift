@@ -90,4 +90,11 @@ final class OverlayManager {
             self?.overlayPanel?.setState(.cancelled)
         }
     }
+
+    /// Update waveform with audio level
+    func updateAudioLevel(_ level: Float) {
+        DispatchQueue.main.async { [weak self] in
+            self?.overlayPanel?.updateAudioLevel(level)
+        }
+    }
 }

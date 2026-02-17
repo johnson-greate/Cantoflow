@@ -10,7 +10,7 @@ enum OverlayState {
     case cancelled
 }
 
-/// Floating panel that shows recording status and waveform
+/// Compact floating panel that shows recording status and waveform (Dynamic Island style)
 final class RecordingOverlayPanel: NSPanel {
     /// Overlay state
     private(set) var overlayState: OverlayState = .recording {
@@ -26,25 +26,21 @@ final class RecordingOverlayPanel: NSPanel {
     private let doneButton = NSButton()
     private let statusLabel = NSTextField()
     private let waveformView = WaveformView()
-    private let micLabel = NSTextField()
-    private let spinnerView = NSProgressIndicator()
 
     // MARK: - Callbacks
 
     var onCancel: (() -> Void)?
     var onDone: (() -> Void)?
 
-    // MARK: - Constants
+    // MARK: - Constants (Compact Capsule Design)
 
-    private static let panelWidth: CGFloat = 480
-    private static let panelHeight: CGFloat = 120
-    private static let cornerRadius: CGFloat = 16
+    private static let panelWidth: CGFloat = 280
+    private static let panelHeight: CGFloat = 56
+    private static let cornerRadius: CGFloat = 28  // height / 2 for capsule
     private static let bottomMargin: CGFloat = 80
 
-    // MARK: - Audio Monitoring
-
-    private var audioEngine: AVAudioEngine?
-    private var levelUpdateTimer: Timer?
+    /// Stored correct position (to prevent drift)
+    private var targetFrame: NSRect = .zero
 
     // MARK: - Initialization
 
@@ -78,13 +74,15 @@ final class RecordingOverlayPanel: NSPanel {
         let y = screenFrame.origin.y + bottomMargin
 
         let rect = NSRect(x: x, y: y, width: panelWidth, height: panelHeight)
-        return RecordingOverlayPanel(contentRect: rect, styleMask: [], backing: .buffered, defer: false)
+        let panel = RecordingOverlayPanel(contentRect: rect, styleMask: [], backing: .buffered, defer: false)
+        panel.targetFrame = rect  // Store the correct position
+        return panel
     }
 
     // MARK: - Setup
 
     private func setupPanel() {
-        // Panel settings
+        // Panel settings - critical for not stealing focus
         level = .floating
         isOpaque = false
         backgroundColor = .clear
@@ -92,12 +90,15 @@ final class RecordingOverlayPanel: NSPanel {
         hidesOnDeactivate = false
         collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
 
-        // Don't become key window (keep focus on current app)
+        // Critical: Don't become key window (keep focus on current app)
         becomesKeyOnlyIfNeeded = true
+
+        // Ensure mouse events pass through non-interactive areas
+        ignoresMouseEvents = false
     }
 
     private func setupUI() {
-        // Container with vibrancy effect
+        // Container with vibrancy effect (capsule shape)
         containerView.frame = NSRect(x: 0, y: 0, width: Self.panelWidth, height: Self.panelHeight)
         containerView.material = .hudWindow
         containerView.blendingMode = .behindWindow
@@ -108,59 +109,53 @@ final class RecordingOverlayPanel: NSPanel {
 
         contentView = containerView
 
-        // Cancel button (top left)
-        cancelButton.frame = NSRect(x: 16, y: Self.panelHeight - 36, width: 24, height: 24)
+        // Cancel button (left side) - small, circular
+        cancelButton.frame = NSRect(x: 12, y: (Self.panelHeight - 28) / 2, width: 28, height: 28)
         cancelButton.bezelStyle = .circular
         cancelButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Cancel")
+        cancelButton.imageScaling = .scaleProportionallyDown
         cancelButton.target = self
         cancelButton.action = #selector(cancelClicked)
         cancelButton.isBordered = false
+        cancelButton.refusesFirstResponder = true
         containerView.addSubview(cancelButton)
 
-        // Done button (top right)
-        doneButton.frame = NSRect(x: Self.panelWidth - 40, y: Self.panelHeight - 36, width: 24, height: 24)
+        // Done button (right side) - small, circular
+        doneButton.frame = NSRect(x: Self.panelWidth - 40, y: (Self.panelHeight - 28) / 2, width: 28, height: 28)
         doneButton.bezelStyle = .circular
-        doneButton.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: "Done")
+        doneButton.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: "Done")
         doneButton.contentTintColor = .systemGreen
+        doneButton.imageScaling = .scaleProportionallyDown
         doneButton.target = self
         doneButton.action = #selector(doneClicked)
         doneButton.isBordered = false
+        doneButton.refusesFirstResponder = true
         containerView.addSubview(doneButton)
 
-        // Status label (top center)
-        statusLabel.frame = NSRect(x: 50, y: Self.panelHeight - 36, width: Self.panelWidth - 100, height: 24)
-        statusLabel.stringValue = "Listening..."
+        // Waveform view (center, compact)
+        let waveformWidth: CGFloat = 140
+        let waveformHeight: CGFloat = 32
+        waveformView.frame = NSRect(
+            x: (Self.panelWidth - waveformWidth) / 2,
+            y: (Self.panelHeight - waveformHeight) / 2,
+            width: waveformWidth,
+            height: waveformHeight
+        )
+        waveformView.barColor = .systemBlue
+        containerView.addSubview(waveformView)
+
+        // Status label (overlaid on waveform, centered)
+        statusLabel.frame = NSRect(x: 48, y: (Self.panelHeight - 20) / 2, width: Self.panelWidth - 96, height: 20)
+        statusLabel.stringValue = ""
         statusLabel.alignment = .center
-        statusLabel.font = .systemFont(ofSize: 14, weight: .medium)
+        statusLabel.font = .systemFont(ofSize: 12, weight: .medium)
         statusLabel.textColor = .labelColor
         statusLabel.isBezeled = false
         statusLabel.drawsBackground = false
         statusLabel.isEditable = false
         statusLabel.isSelectable = false
+        statusLabel.isHidden = true  // Only show during processing states
         containerView.addSubview(statusLabel)
-
-        // Waveform view (center)
-        waveformView.frame = NSRect(x: 20, y: 30, width: Self.panelWidth - 40, height: 50)
-        waveformView.barColor = .systemBlue
-        containerView.addSubview(waveformView)
-
-        // Spinner (hidden by default)
-        spinnerView.frame = NSRect(x: (Self.panelWidth - 24) / 2, y: 45, width: 24, height: 24)
-        spinnerView.style = .spinning
-        spinnerView.isHidden = true
-        containerView.addSubview(spinnerView)
-
-        // Mic label (bottom center)
-        micLabel.frame = NSRect(x: 20, y: 8, width: Self.panelWidth - 40, height: 16)
-        micLabel.stringValue = getMicrophoneName()
-        micLabel.alignment = .center
-        micLabel.font = .systemFont(ofSize: 11)
-        micLabel.textColor = .secondaryLabelColor
-        micLabel.isBezeled = false
-        micLabel.drawsBackground = false
-        micLabel.isEditable = false
-        micLabel.isSelectable = false
-        containerView.addSubview(micLabel)
     }
 
     // MARK: - State Management
@@ -175,40 +170,39 @@ final class RecordingOverlayPanel: NSPanel {
 
             switch self.overlayState {
             case .recording:
-                self.statusLabel.stringValue = "Listening..."
+                self.statusLabel.isHidden = true
                 self.waveformView.isHidden = false
-                self.spinnerView.isHidden = true
-                self.spinnerView.stopAnimation(nil)
                 self.cancelButton.isEnabled = true
                 self.doneButton.isEnabled = true
                 self.waveformView.barColor = .systemBlue
+                self.waveformView.setMode(.live)
 
             case .transcribing:
                 self.statusLabel.stringValue = "Transcribing..."
+                self.statusLabel.isHidden = false
                 self.waveformView.isHidden = false
-                self.spinnerView.isHidden = true
                 self.cancelButton.isEnabled = false
                 self.doneButton.isEnabled = false
                 self.waveformView.barColor = .systemGray
-                self.waveformView.setIdle()
+                self.waveformView.setMode(.processing)
 
             case .polishing:
                 self.statusLabel.stringValue = "Polishing..."
-                self.waveformView.isHidden = true
-                self.spinnerView.isHidden = false
-                self.spinnerView.startAnimation(nil)
+                self.statusLabel.isHidden = false
+                self.waveformView.isHidden = false
                 self.cancelButton.isEnabled = false
                 self.doneButton.isEnabled = false
+                self.waveformView.barColor = .systemOrange
+                self.waveformView.setMode(.processing)
 
             case .complete:
-                self.statusLabel.stringValue = "Done"
+                self.statusLabel.stringValue = "✓ Done"
+                self.statusLabel.isHidden = false
                 self.waveformView.isHidden = true
-                self.spinnerView.isHidden = true
-                self.spinnerView.stopAnimation(nil)
                 self.cancelButton.isEnabled = false
                 self.doneButton.isEnabled = false
-                // Auto-hide after delay
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                // Auto-hide after short delay
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
                     self?.hideWithAnimation()
                 }
 
@@ -218,100 +212,65 @@ final class RecordingOverlayPanel: NSPanel {
         }
     }
 
-    // MARK: - Audio Level Monitoring
+    // MARK: - Audio Level (called from AudioCapture)
 
-    func startAudioMonitoring() {
-        stopAudioMonitoring()
-
-        audioEngine = AVAudioEngine()
-        guard let engine = audioEngine else { return }
-
-        let inputNode = engine.inputNode
-        let format = inputNode.outputFormat(forBus: 0)
-
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
-            self?.processAudioBuffer(buffer)
-        }
-
-        do {
-            try engine.start()
-            waveformView.startAnimation()
-        } catch {
-            print("Failed to start audio monitoring: \(error)")
-        }
-    }
-
-    func stopAudioMonitoring() {
-        waveformView.stopAnimation()
-
-        if let engine = audioEngine {
-            engine.stop()
-            engine.inputNode.removeTap(onBus: 0)
-        }
-        audioEngine = nil
-
-        levelUpdateTimer?.invalidate()
-        levelUpdateTimer = nil
-    }
-
-    private func processAudioBuffer(_ buffer: AVAudioPCMBuffer) {
-        guard let channelData = buffer.floatChannelData?[0] else { return }
-        let frameLength = Int(buffer.frameLength)
-
-        // Calculate RMS level
-        var sum: Float = 0
-        for i in 0..<frameLength {
-            sum += channelData[i] * channelData[i]
-        }
-        let rms = sqrt(sum / Float(frameLength))
-
-        // Convert to dB and normalize
-        let db = 20 * log10(max(rms, 0.0001))
-        let normalizedLevel = (db + 60) / 60 // Normalize to 0-1 range (assuming -60dB to 0dB range)
-
-        DispatchQueue.main.async { [weak self] in
-            self?.waveformView.updateLevel(normalizedLevel)
-        }
+    /// Update waveform with audio level from AudioCapture
+    func updateAudioLevel(_ level: Float) {
+        guard overlayState == .recording else { return }
+        waveformView.updateLevel(level)
     }
 
     // MARK: - Show/Hide Animation
 
     func showWithAnimation() {
+        // CRITICAL: Always reset to correct position FIRST to prevent drift
+        recalculateTargetFrame()
+        setFrame(targetFrame, display: false)
+
+        // Start hidden and below target position
         alphaValue = 0
+        var startFrame = targetFrame
+        startFrame.origin.y -= 20
+        setFrame(startFrame, display: false)
+
         orderFront(nil)
 
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.2
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             self.animator().alphaValue = 1
-
-            // Slide up from below
-            var frame = self.frame
-            frame.origin.y += 20
-            self.setFrame(frame, display: false)
-
-            frame.origin.y -= 20
-            self.animator().setFrame(frame, display: true)
+            self.animator().setFrame(self.targetFrame, display: true)
         }
 
-        startAudioMonitoring()
+        waveformView.startAnimation()
     }
 
     func hideWithAnimation() {
-        stopAudioMonitoring()
+        waveformView.stopAnimation()
+
+        var endFrame = frame
+        endFrame.origin.y -= 20
 
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.15
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)
             self.animator().alphaValue = 0
-
-            // Slide down
-            var frame = self.frame
-            frame.origin.y -= 20
-            self.animator().setFrame(frame, display: true)
+            self.animator().setFrame(endFrame, display: true)
         }, completionHandler: { [weak self] in
             self?.orderOut(nil)
         })
+    }
+
+    /// Recalculate target frame position (for multi-monitor or screen changes)
+    private func recalculateTargetFrame() {
+        let mouseLocation = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouseLocation, $0.frame, false) } ?? NSScreen.main
+        let screenFrame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1920, height: 1080)
+
+        let x = screenFrame.origin.x + (screenFrame.width - Self.panelWidth) / 2
+        let y = screenFrame.origin.y + Self.bottomMargin
+
+        targetFrame = NSRect(x: x, y: y, width: Self.panelWidth, height: Self.panelHeight)
     }
 
     // MARK: - Actions
@@ -324,21 +283,6 @@ final class RecordingOverlayPanel: NSPanel {
         onDone?()
     }
 
-    // MARK: - Helpers
-
-    private func getMicrophoneName() -> String {
-        let devices = AVCaptureDevice.DiscoverySession(
-            deviceTypes: [.builtInMicrophone, .externalUnknown],
-            mediaType: .audio,
-            position: .unspecified
-        ).devices
-
-        if let device = devices.first {
-            return device.localizedName
-        }
-        return "Microphone"
-    }
-
     // MARK: - Window Behavior
 
     override var canBecomeKey: Bool {
@@ -347,5 +291,11 @@ final class RecordingOverlayPanel: NSPanel {
 
     override var canBecomeMain: Bool {
         return false
+    }
+
+    // Prevent activation
+    override func mouseDown(with event: NSEvent) {
+        // Don't activate panel on mouse down
+        // Just pass through to button handlers
     }
 }

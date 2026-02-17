@@ -1,5 +1,34 @@
 # CantoFlow Changelog
 
+## [0.2.1] - 2026-02-18
+
+### Added
+- **Version display**: Menu bar menu now shows app version at bottom
+- **Vocabulary Management**: "Manage Vocabulary..." menu item (⌘,)
+  - Add personal terms
+  - Clear all terms
+  - Import from text file
+  - View current vocabulary count
+
+### Changed
+- **Compact overlay design**: Recording panel redesigned as capsule (280×56pt)
+  - Dynamic Island style appearance
+  - Reduced from 480×120pt to 280×56pt
+  - Capsule shape (corner radius = height/2)
+  - Smaller waveform (24 bars instead of 40)
+
+### Fixed
+- **Overlay position drift**: Panel no longer moves down with each recording
+  - Added `targetFrame` to store correct position
+  - `showWithAnimation()` now recalculates position each time
+- **Menu cleanup**: Renamed "Quit CantoFlow_c" to "Quit CantoFlow"
+
+### Known Issues
+- Vocabulary settings uses simplified alert-based UI (SwiftUI rewrite planned for Phase 3)
+- IMK warning message in console is harmless system noise
+
+---
+
 ## [0.2.0] - 2026-02-17 (Phase 2)
 
 ### Added
