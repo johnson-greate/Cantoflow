@@ -17,6 +17,11 @@ struct AppConfig {
     var funasrHost: String = "127.0.0.1"
     var funasrPort: Int = 8765
 
+    // Phase 2: Push-to-Talk configuration
+    var triggerKey: String = "auto"  // "auto", "fn", "f12", "f13", "f14", "f15"
+    var showOverlay: Bool = true
+    var useVocabulary: Bool = true
+
     enum STTProfile: String, CaseIterable {
         case fast
         case balanced
@@ -153,6 +158,15 @@ struct AppConfig {
                 config.autoReplace = true
             case "--no-auto-replace":
                 config.autoReplace = false
+            case "--trigger-key":
+                if i + 1 < args.count {
+                    config.triggerKey = args[i + 1]
+                    i += 1
+                }
+            case "--no-overlay":
+                config.showOverlay = false
+            case "--no-vocabulary":
+                config.useVocabulary = false
             case "-h", "--help":
                 printUsage()
                 exit(0)
@@ -167,7 +181,7 @@ struct AppConfig {
 
     static func printUsage() {
         let usage = """
-        CantoFlow_c - Cantonese Speech-to-Text for macOS
+        CantoFlow - Cantonese Speech-to-Text for macOS (Phase 2)
 
         Usage:
           cantoflow [OPTIONS]
@@ -188,6 +202,9 @@ struct AppConfig {
           --no-auto-paste         Disable auto-paste
           --auto-replace          Auto-replace raw with polished text
           --no-auto-replace       Disable auto-replace
+          --trigger-key KEY       Trigger key: auto, fn, f12, f13, f14, f15 (default: auto)
+          --no-overlay            Disable recording overlay panel
+          --no-vocabulary         Disable vocabulary injection
           -h, --help              Show this help message
 
         Environment Variables:
@@ -199,13 +216,20 @@ struct AppConfig {
           whisper                 Local whisper.cpp (default, ~4-5s latency)
           funasr                  FunASR HTTP server (requires separate server, ~300ms streaming)
 
-        Hotkeys:
-          Fn (Globe key) or F12   Toggle recording
+        Push-to-Talk:
+          Hold Fn (MacBook) or F15 (external keyboard) to record.
+          Release to stop recording and process.
+          Recording < 0.3s is treated as accidental tap and cancelled.
+
+        Vocabulary System:
+          Personal vocabulary stored in ~/Library/Application Support/CantoFlow/
+          Built-in Hong Kong vocabulary (MTR stations, place names, slang, etc.)
+          Vocabulary is injected into Whisper and LLM prompts for better accuracy.
 
         Permissions Required:
           - Microphone access (for audio recording)
           - Accessibility (for hotkey and text insertion)
-          - Input Monitoring (for Fn key detection)
+          - Input Monitoring (for Fn/F15 key detection)
         """
         print(usage)
     }

@@ -8,13 +8,19 @@ enum UIState: String {
 }
 
 /// Menu bar controller for CantoFlow_c
-final class MenuBarController: NSObject {
+final class MenuBarController: NSObject, PushToTalkDelegate {
     private let config: AppConfig
     private let pipeline: STTPipeline
 
     private var statusItem: NSStatusItem!
     private let menu = NSMenu()
     private var toggleItem: NSMenuItem?
+
+    /// Overlay panel for recording feedback
+    private var overlayPanel: RecordingOverlayPanel?
+
+    /// Whether to show overlay during recording
+    var showOverlay: Bool = true
 
     private var state: UIState = .idle {
         didSet {
@@ -48,7 +54,7 @@ final class MenuBarController: NSObject {
     }
 
     private func setupMenu() {
-        let hint = NSMenuItem(title: "Fn or F12: Start / Stop", action: nil, keyEquivalent: "")
+        let hint = NSMenuItem(title: "Hold Fn or F15 to record", action: nil, keyEquivalent: "")
         hint.isEnabled = false
         menu.addItem(hint)
         menu.addItem(NSMenuItem.separator())
@@ -80,21 +86,21 @@ final class MenuBarController: NSObject {
 
         switch state {
         case .idle:
-            title = " CantoFlow_c"
+            title = " CantoFlow"
             symbolName = "mic.fill"
             tint = nil
         case .recording:
-            title = " CantoFlow_c REC"
+            title = " REC"
             symbolName = "record.circle.fill"
             tint = NSColor.systemRed
         case .processing:
-            title = " CantoFlow_c..."
+            title = " ..."
             symbolName = "hourglass.circle.fill"
             tint = NSColor.systemOrange
         }
 
         button.title = title
-        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "CantoFlow_c")
+        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "CantoFlow")
         button.imagePosition = .imageLeading
         button.contentTintColor = tint
 
@@ -105,6 +111,35 @@ final class MenuBarController: NSObject {
             toggleItem?.title = "Stop Recording"
         case .processing:
             toggleItem?.title = "Processing..."
+        }
+    }
+
+    // MARK: - Overlay Management
+
+    private func showRecordingOverlay() {
+        guard showOverlay else { return }
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+
+            if self.overlayPanel == nil {
+                self.overlayPanel = RecordingOverlayPanel.create()
+                self.overlayPanel?.onCancel = { [weak self] in
+                    self?.cancelRecording()
+                }
+                self.overlayPanel?.onDone = { [weak self] in
+                    self?.stopRecordingAndProcess()
+                }
+            }
+
+            self.overlayPanel?.setState(.recording)
+            self.overlayPanel?.showWithAnimation()
+        }
+    }
+
+    private func hideOverlay() {
+        DispatchQueue.main.async { [weak self] in
+            self?.overlayPanel?.hideWithAnimation()
         }
     }
 
@@ -162,7 +197,7 @@ final class MenuBarController: NSObject {
         do {
             try pipeline.startRecording()
             state = .recording
-            NotificationManager.shared.notify("Recording started")
+            showRecordingOverlay()
         } catch {
             NotificationManager.shared.notifyError("Failed to start recording: \(error.localizedDescription)")
             state = .idle
@@ -173,11 +208,13 @@ final class MenuBarController: NSObject {
         guard state == .recording else { return }
 
         state = .processing
+        overlayPanel?.setState(.transcribing)
 
         Task {
             do {
                 let result = try await pipeline.stopAndProcess()
                 await MainActor.run {
+                    overlayPanel?.setState(.complete)
                     NotificationManager.shared.notifySuccess(
                         recordMs: result.recordingMs,
                         sttMs: result.sttMs,
@@ -187,9 +224,10 @@ final class MenuBarController: NSObject {
                 }
             } catch let error as PipelineError {
                 await MainActor.run {
+                    hideOverlay()
                     switch error {
                     case .recordingTooShort(let ms):
-                        NotificationManager.shared.notify("Recording too short (\(ms)ms). Hold Fn for at least 1.5s.")
+                        NotificationManager.shared.notify("Recording too short (\(ms)ms). Hold for at least 0.3s.")
                     default:
                         NotificationManager.shared.notifyError(error.localizedDescription)
                     }
@@ -197,10 +235,37 @@ final class MenuBarController: NSObject {
                 }
             } catch {
                 await MainActor.run {
+                    hideOverlay()
                     NotificationManager.shared.notifyError(error.localizedDescription)
                     state = .idle
                 }
             }
         }
+    }
+
+    private func cancelRecording() {
+        guard state == .recording else { return }
+        pipeline.cancelRecording()
+        hideOverlay()
+        state = .idle
+    }
+
+    // MARK: - PushToTalkDelegate
+
+    func pushToTalkDidStartRecording() {
+        startRecording()
+    }
+
+    func pushToTalkDidStopRecording(duration: TimeInterval) {
+        stopRecordingAndProcess()
+    }
+
+    func pushToTalkDidCancel(reason: String) {
+        cancelRecording()
+        NotificationManager.shared.notify(reason)
+    }
+
+    func pushToTalkStateDidChange(_ state: PushToTalkState) {
+        // Additional state change handling if needed
     }
 }

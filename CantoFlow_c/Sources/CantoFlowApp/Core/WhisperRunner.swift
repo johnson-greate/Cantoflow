@@ -39,11 +39,21 @@ struct WhisperResult {
 final class WhisperRunner {
     private let config: AppConfig
 
-    /// Cantonese STT prompt for better accuracy
-    static let sttPrompt = "以下係廣東話句子，請以繁體中文輸出。常見香港地名：銅鑼灣、維園、旺角、尖沙咀、中環、沙田、將軍澳、荃灣、屯門。"
+    /// Whether to use vocabulary injection in the prompt
+    var useVocabularyInjection = true
 
     init(config: AppConfig) {
         self.config = config
+    }
+
+    /// Generate STT prompt with vocabulary injection
+    private func generatePrompt() -> String {
+        if useVocabularyInjection {
+            return VocabularyStore.shared.generateWhisperPrompt(maxLength: 500)
+        } else {
+            // Fallback to basic prompt
+            return "以下係廣東話句子，請以繁體中文輸出。"
+        }
     }
 
     /// Transcribe audio file using whisper-cli
@@ -112,13 +122,15 @@ final class WhisperRunner {
         audioURL: URL,
         outputPrefix: URL
     ) async throws -> (text: String, model: URL)? {
+        let prompt = generatePrompt()
+
         let process = Process()
         process.executableURL = whisperPath
         process.arguments = [
             "-m", modelPath.path,
             "-f", audioURL.path,
             "-l", "yue",  // Cantonese
-            "--prompt", Self.sttPrompt,
+            "--prompt", prompt,
             "-sns",  // Suppress non-speech tokens
             "-nth", "0.35",  // No-speech threshold
             "-otxt",  // Output as text file

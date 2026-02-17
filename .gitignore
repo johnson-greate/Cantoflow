@@ -17,3 +17,16 @@ CantoFlow.app/
 
 # macOS
 .DS_Store
+
+# Build artifacts
+CantoFlow_c/.build/
+.out/
+
+# API keys (never commit)
+**/openai_api_key.txt
+**/qwen_api_key.txt
+**/anthropic_api_key.txt
+**/*_api_key.txt
+
+# Screenshots
+screenshot/

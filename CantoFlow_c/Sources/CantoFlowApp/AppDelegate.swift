@@ -4,7 +4,7 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let config: AppConfig
     private var menuBarController: MenuBarController?
-    private var hotkeyManager: HotkeyManager?
+    private var pushToTalkManager: PushToTalkManager?
     private var pipeline: STTPipeline?
 
     init(config: AppConfig) {
@@ -24,30 +24,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Initialize menu bar UI
         menuBarController = MenuBarController(config: config, pipeline: pipeline!)
+        menuBarController?.showOverlay = config.showOverlay
 
-        // Initialize hotkey manager
-        hotkeyManager = HotkeyManager { [weak self] in
-            self?.menuBarController?.toggleRecording()
-        }
-        hotkeyManager?.start()
+        // Initialize Push-to-Talk manager
+        pushToTalkManager = PushToTalkManager()
+        pushToTalkManager?.delegate = menuBarController
+        pushToTalkManager?.triggerKey = resolveTriggerKey()
+        pushToTalkManager?.start()
+
+        // Configure vocabulary usage
+        VocabularyStore.shared.hkCommonEnabled = config.useVocabulary
 
         // Check permissions and show ready notification
         checkPermissionsAndNotify()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        hotkeyManager?.stop()
+        pushToTalkManager?.stop()
     }
 
     private func checkPermissionsAndNotify() {
         pipeline?.requestMicrophonePermission { granted in
             DispatchQueue.main.async {
                 if granted {
-                    NotificationManager.shared.notify("CantoFlow_c ready. Press Fn or F12 to record.")
+                    let keyName = self.pushToTalkManager?.triggerKey.displayName ?? "Fn"
+                    NotificationManager.shared.notify("CantoFlow ready. Hold \(keyName) to record.")
                 } else {
                     NotificationManager.shared.notify("Microphone permission denied. Please enable in System Settings.")
                 }
             }
         }
+    }
+
+    /// Resolve trigger key based on config or auto-detect
+    private func resolveTriggerKey() -> TriggerKeyType {
+        // Check if user specified a trigger key
+        switch config.triggerKey.lowercased() {
+        case "fn": return .fn
+        case "f12": return .f12
+        case "f13": return .f13
+        case "f14": return .f14
+        case "f15": return .f15
+        case "auto":
+            fallthrough
+        default:
+            // Auto-detect based on hardware
+            let model = getHardwareModel()
+            if model.contains("MacBook") {
+                return .fn
+            } else {
+                // Mac Mini, Mac Pro, etc. - likely using external keyboard
+                return .f15
+            }
+        }
+    }
+
+    private func getHardwareModel() -> String {
+        var size = 0
+        sysctlbyname("hw.model", nil, &size, nil, 0)
+        var model = [CChar](repeating: 0, count: size)
+        sysctlbyname("hw.model", &model, &size, nil, 0)
+        return String(cString: model)
     }
 }

@@ -35,8 +35,11 @@ struct PolishResult {
 final class TextPolisher {
     private let config: AppConfig
 
-    /// System prompt for polishing Cantonese text
-    static let systemPrompt = """
+    /// Whether to use vocabulary injection in the system prompt
+    var useVocabularyInjection = true
+
+    /// Base system prompt for polishing Cantonese text
+    static let baseSystemPrompt = """
     你是一個廣東話語音輸入助手。你會收到一段由語音識別系統轉錄的廣東話粗文字，你的任務是：
     1. 保持用戶原意，不要過度改寫
     2. 修正語音識別錯字（按上下文）
@@ -50,6 +53,20 @@ final class TextPolisher {
 
     init(config: AppConfig) {
         self.config = config
+    }
+
+    /// Generate system prompt with vocabulary injection
+    private func generateSystemPrompt() -> String {
+        var prompt = Self.baseSystemPrompt
+
+        if useVocabularyInjection {
+            let vocabSection = VocabularyStore.shared.generateClaudePromptSection()
+            if !vocabSection.isEmpty {
+                prompt += "\n" + vocabSection
+            }
+        }
+
+        return prompt
     }
 
     /// Polish raw transcribed text using LLM
@@ -125,12 +142,14 @@ final class TextPolisher {
 
         let model = ProcessInfo.processInfo.environment["QWEN_MODEL"] ?? "qwen-turbo"
 
+        let systemPrompt = generateSystemPrompt()
+
         let requestBody: [String: Any] = [
             "model": model,
             "temperature": 0.2,
             "max_tokens": 1024,
             "messages": [
-                ["role": "system", "content": Self.systemPrompt],
+                ["role": "system", "content": systemPrompt],
                 ["role": "user", "content": text]
             ]
         ]
@@ -183,13 +202,14 @@ final class TextPolisher {
         let apiKey = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let model = ProcessInfo.processInfo.environment["OPENAI_MODEL"] ?? "gpt-4o-mini"
+        let systemPrompt = generateSystemPrompt()
 
         let requestBody: [String: Any] = [
             "model": model,
             "temperature": 0.2,
             "max_completion_tokens": 1024,
             "messages": [
-                ["role": "system", "content": Self.systemPrompt],
+                ["role": "system", "content": systemPrompt],
                 ["role": "user", "content": text]
             ]
         ]
@@ -242,12 +262,13 @@ final class TextPolisher {
         let apiKey = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let model = ProcessInfo.processInfo.environment["ANTHROPIC_MODEL"] ?? "claude-sonnet-4-5-20250929"
+        let systemPrompt = generateSystemPrompt()
 
         let requestBody: [String: Any] = [
             "model": model,
             "max_tokens": 1024,
             "temperature": 0.2,
-            "system": Self.systemPrompt,
+            "system": systemPrompt,
             "messages": [
                 [
                     "role": "user",
