@@ -32,6 +32,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pushToTalkManager?.triggerKey = resolveTriggerKey()
         pushToTalkManager?.start()
 
+        // Set back-reference for state management
+        menuBarController?.pushToTalkManager = pushToTalkManager
+
         // Configure vocabulary usage
         VocabularyStore.shared.hkCommonEnabled = config.useVocabulary
 

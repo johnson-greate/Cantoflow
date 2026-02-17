@@ -19,6 +19,9 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
     /// Overlay panel for recording feedback
     private var overlayPanel: RecordingOverlayPanel?
 
+    /// Reference to PushToTalkManager (set by AppDelegate)
+    weak var pushToTalkManager: PushToTalkManager?
+
     /// Whether to show overlay during recording
     var showOverlay: Bool = true
 
@@ -221,6 +224,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
                         polishMs: result.polishMs
                     )
                     state = .idle
+                    pushToTalkManager?.markProcessingComplete()
                 }
             } catch let error as PipelineError {
                 await MainActor.run {
@@ -232,12 +236,14 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
                         NotificationManager.shared.notifyError(error.localizedDescription)
                     }
                     state = .idle
+                    pushToTalkManager?.markProcessingComplete()
                 }
             } catch {
                 await MainActor.run {
                     hideOverlay()
                     NotificationManager.shared.notifyError(error.localizedDescription)
                     state = .idle
+                    pushToTalkManager?.markProcessingComplete()
                 }
             }
         }
