@@ -199,6 +199,26 @@ chmod +x ./poc/run_light_ui.sh
 ./poc/run_light_ui.sh
 ```
 
+你亦可以手動打包 `.app`：
+
+```bash
+chmod +x ./poc/package_light_ui_app.sh
+./poc/package_light_ui_app.sh
+open /Users/johnson_tam/Documents/CantoFlow/CantoFlow.app
+```
+
+app 路徑：
+
+- `/Users/johnson_tam/Documents/CantoFlow/CantoFlow.app`
+
+一鍵安裝到 `/Applications`：
+
+```bash
+chmod +x ./poc/install_cantoflow_app.sh
+./poc/install_cantoflow_app.sh
+open /Applications/CantoFlow.app
+```
+
 操作：
 
 1. Menu Bar 會見到 mic icon + `CantoFlow`
@@ -206,12 +226,19 @@ chmod +x ./poc/run_light_ui.sh
 3. 再按一次 `Fn` 停止錄音，之後自動做 STT + LLM polish
 4. （預設）Fast IME：先插 raw，再嘗試用 polished 覆蓋
 
+> 目前 `.app` 預設是「只做錄音 + STT + polish + copy 到剪貼簿」，**不會自動貼上**。  
+> 如要自動貼上/替換（Fast IME），需額外用 `--fast-ime` 啟動，屆時才會需要 Automation 權限。
+
 必要權限（第一次會提示）：
 
 - Microphone
 - Accessibility（為自動貼上 / 取代）
 - Input Monitoring（為全域 Fn key 監聽）
-- Automation（允許控制 `System Events`）
+- Automation（只有在你啟用 `--fast-ime` 時才需要）
+
+建議手動加權限時用以下路徑（非 hidden）：
+
+- `/Users/johnson_tam/Documents/CantoFlow/CantoFlow.app`
 
 如果你發現 `Fn` 被系統功能搶走，請去 macOS 鍵盤設定停用相關 Fn 單擊功能後再試。
 

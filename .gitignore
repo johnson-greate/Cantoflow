@@ -12,6 +12,8 @@ light_ui/.build/
 .swift-cache/
 .swiftpm-cache/
 .clang-cache/
+light_ui/cantoflow-light-ui
+CantoFlow.app/
 
 # macOS
 .DS_Store

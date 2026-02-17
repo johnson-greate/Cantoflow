@@ -2,14 +2,15 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname "$0")/.." >/dev/null 2>&1 && pwd -P)"
-cd "${ROOT_DIR}/light_ui"
+APP_PATH="${ROOT_DIR}/CantoFlow.app"
 
-# Default behavior:
-# - Fn/Globe toggles recording
-# - fast STT profile
-# - fast IME on (raw first, polish then replace)
-swift run cantoflow-light-ui \
-  --project-root "${ROOT_DIR}" \
-  --stt-profile fast \
-  "$@"
+if [[ ! -d "${APP_PATH}" ]]; then
+  "${ROOT_DIR}/poc/package_light_ui_app.sh"
+fi
 
+if [[ $# -eq 0 ]]; then
+  open "${APP_PATH}"
+else
+  # Debug path when you need custom args:
+  "${APP_PATH}/Contents/MacOS/CantoFlow" "$@"
+fi
