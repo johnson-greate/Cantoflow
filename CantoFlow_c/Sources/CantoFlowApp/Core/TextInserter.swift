@@ -1,6 +1,17 @@
 import AppKit
 import ApplicationServices
 
+// Known terminal emulator bundle IDs where Cmd+Z does not undo text input
+private let terminalBundleIDs: Set<String> = [
+    "com.apple.Terminal",
+    "com.googlecode.iterm2",
+    "dev.warp.desktop",
+    "net.kovidgoyal.kitty",
+    "com.microsoft.VSCode",
+    "io.alacritty",
+    "co.zeit.hyper",
+]
+
 /// Methods for inserting text
 enum InsertionMethod: String {
     case axAPI = "ax_api"
@@ -43,11 +54,15 @@ final class TextInserter {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
+        // Small delay to ensure clipboard is ready
+        Thread.sleep(forTimeInterval: 0.05)
+
         // Send Cmd+V
         let success = sendCmdV()
 
-        // Restore clipboard after a short delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+        // Restore clipboard after a LONG delay to ensure paste completes
+        // CGEvent posting is asynchronous, paste can take 500ms+ in some apps
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
             self?.clipboardGuard.restore()
         }
 
@@ -57,6 +72,16 @@ final class TextInserter {
     /// Undo the last insertion (for fast IME mode)
     func undo() -> Bool {
         return sendCmdZ()
+    }
+
+    /// Returns true if the frontmost app is a terminal emulator.
+    /// In terminals, Cmd+Z does not undo text and pasted newlines execute commands,
+    /// so fast IME raw-paste must be suppressed.
+    func isFrontmostAppTerminal() -> Bool {
+        guard let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else {
+            return false
+        }
+        return terminalBundleIDs.contains(bundleID)
     }
 
     // MARK: - Private Methods

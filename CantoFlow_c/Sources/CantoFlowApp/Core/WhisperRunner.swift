@@ -33,6 +33,19 @@ struct WhisperResult {
     let rawOutputPath: URL
     let modelUsed: URL
     let durationMs: Int
+    let breakdown: SttBreakdown
+
+    /// Sub-timing breakdown of the whisper-cli process
+    struct SttBreakdown {
+        /// Time for the OS to spawn the whisper-cli process (before first token)
+        let launchMs: Int
+        /// Time whisper-cli spent running inference (waitUntilExit)
+        let inferenceMs: Int
+        /// Time to read the output .txt file from disk
+        let outputReadMs: Int
+        /// Whether Metal GPU acceleration was requested for this run
+        let metalEnabled: Bool
+    }
 }
 
 /// Runner for external whisper-cli binary
@@ -42,8 +55,41 @@ final class WhisperRunner {
     /// Whether to use vocabulary injection in the prompt
     var useVocabularyInjection = true
 
+    /// Cached Metal support detection result (nil = not yet checked)
+    private static var _metalSupported: Bool? = nil
+
     init(config: AppConfig) {
         self.config = config
+    }
+
+    /// Detect whether the whisper-cli binary was compiled with Metal GPU support.
+    /// Result is cached after the first call to avoid repeated process spawns.
+    static func detectMetalSupport(whisperPath: URL) -> Bool {
+        if let cached = _metalSupported {
+            return cached
+        }
+
+        let process = Process()
+        process.executableURL = whisperPath
+        process.arguments = ["--help"]
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = outputPipe  // whisper-cli prints help to stderr
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            let helpText = String(data: data, encoding: .utf8) ?? ""
+            // The binary has Metal/GPU support if --no-gpu or --device flags appear in help
+            let supported = helpText.contains("--no-gpu") || helpText.contains("--device")
+            _metalSupported = supported
+            return supported
+        } catch {
+            _metalSupported = false
+            return false
+        }
     }
 
     /// Generate STT prompt with vocabulary injection
@@ -52,7 +98,7 @@ final class WhisperRunner {
             return VocabularyStore.shared.generateWhisperPrompt(maxLength: 500)
         } else {
             // Fallback to basic prompt
-            return "以下係廣東話句子，請以繁體中文輸出。"
+            return "以下係廣東話句子，必須以繁體中文輸出。"
         }
     }
 
@@ -79,28 +125,42 @@ final class WhisperRunner {
 
         let startTime = Date()
 
+        // Detect Metal GPU support once (cached after first call)
+        let metalSupported = WhisperRunner.detectMetalSupport(whisperPath: whisperPath)
+        let metalEnabled = metalSupported && config.useMetalGPU
+
+        if metalSupported && !config.useMetalGPU {
+            print("[WhisperRunner] Metal GPU available but disabled via --no-metal")
+        } else if !metalSupported {
+            print("[WhisperRunner] Metal GPU not available in this whisper-cli build")
+        } else {
+            print("[WhisperRunner] Metal GPU enabled (device 0)")
+        }
+
         // Run whisper-cli with model fallback
-        var result = try await runWhisper(
+        var runResult = try await runWhisper(
             whisperPath: whisperPath,
             modelPath: modelPath,
             audioURL: audioURL,
-            outputPrefix: outputPrefix
+            outputPrefix: outputPrefix,
+            metalEnabled: metalEnabled
         )
 
         // If turbo model failed, try fallback to large-v3
-        if result == nil && modelPath == config.turboModelPath {
+        if runResult == nil && modelPath == config.turboModelPath {
             let fallbackModel = config.largeModelPath
             if fm.fileExists(atPath: fallbackModel.path) {
-                result = try await runWhisper(
+                runResult = try await runWhisper(
                     whisperPath: whisperPath,
                     modelPath: fallbackModel,
                     audioURL: audioURL,
-                    outputPrefix: outputPrefix
+                    outputPrefix: outputPrefix,
+                    metalEnabled: metalEnabled
                 )
             }
         }
 
-        guard let (text, actualModel) = result else {
+        guard let run = runResult else {
             throw WhisperError.emptyTranscription
         }
 
@@ -108,25 +168,43 @@ final class WhisperRunner {
         let outputPath = URL(fileURLWithPath: outputPrefix.path + ".txt")
 
         return WhisperResult(
-            text: text,
+            text: run.text,
             rawOutputPath: outputPath,
-            modelUsed: actualModel,
-            durationMs: durationMs
+            modelUsed: run.model,
+            durationMs: durationMs,
+            breakdown: WhisperResult.SttBreakdown(
+                launchMs: run.launchMs,
+                inferenceMs: run.inferenceMs,
+                outputReadMs: run.outputReadMs,
+                metalEnabled: run.metalEnabled
+            )
         )
     }
 
-    /// Execute whisper-cli process
+    /// Internal result type carrying timing alongside transcribed content
+    private struct RunResult {
+        let text: String
+        let model: URL
+        let launchMs: Int
+        let inferenceMs: Int
+        let outputReadMs: Int
+        let metalEnabled: Bool
+    }
+
+    /// Execute whisper-cli process, returning text + sub-timing
     private func runWhisper(
         whisperPath: URL,
         modelPath: URL,
         audioURL: URL,
-        outputPrefix: URL
-    ) async throws -> (text: String, model: URL)? {
+        outputPrefix: URL,
+        metalEnabled: Bool
+    ) async throws -> RunResult? {
         let prompt = generatePrompt()
 
         let process = Process()
         process.executableURL = whisperPath
-        process.arguments = [
+
+        var args: [String] = [
             "-m", modelPath.path,
             "-f", audioURL.path,
             "-l", "yue",  // Cantonese
@@ -138,6 +216,28 @@ final class WhisperRunner {
             "-np"  // No progress
         ]
 
+        if metalEnabled {
+            // Explicitly select GPU device 0 (Metal on Apple Silicon)
+            args += ["-dev", "0"]
+        } else {
+            // Disable GPU, fall back to CPU
+            args += ["-ng"]
+        }
+
+        // Profile-specific decode parameters: trade accuracy for speed
+        switch config.sttProfile {
+        case .fast:
+            // Greedy search (beam-size 1): skips beam search, ~3-5x faster inference
+            args += ["--beam-size", "1", "--best-of", "1"]
+        case .balanced:
+            // Reduced beam search
+            args += ["--beam-size", "3"]
+        case .accurate:
+            break  // whisper-cli defaults: beam-size 5, best-of 5
+        }
+
+        process.arguments = args
+
         let outputPipe = Pipe()
         let errorPipe = Pipe()
         process.standardOutput = outputPipe
@@ -146,8 +246,16 @@ final class WhisperRunner {
         return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
+                    // T1: process launch (OS fork+exec overhead)
+                    let t1 = Date()
                     try process.run()
+                    let t2 = Date()
+                    let launchMs = Int(t2.timeIntervalSince(t1) * 1000)
+
+                    // T2: model load + inference (waitUntilExit)
                     process.waitUntilExit()
+                    let t3 = Date()
+                    let inferenceMs = Int(t3.timeIntervalSince(t2) * 1000)
 
                     let exitCode = process.terminationStatus
                     if exitCode != 0 {
@@ -157,7 +265,7 @@ final class WhisperRunner {
                         return
                     }
 
-                    // Read the output text file
+                    // T3: output file read
                     let outputPath = URL(fileURLWithPath: outputPrefix.path + ".txt")
                     guard FileManager.default.fileExists(atPath: outputPath.path) else {
                         continuation.resume(throwing: WhisperError.outputFileNotFound)
@@ -166,11 +274,19 @@ final class WhisperRunner {
 
                     let text = try String(contentsOf: outputPath, encoding: .utf8)
                         .trimmingCharacters(in: .whitespacesAndNewlines)
+                    let outputReadMs = Int(Date().timeIntervalSince(t3) * 1000)
 
                     if text.isEmpty {
                         continuation.resume(returning: nil)
                     } else {
-                        continuation.resume(returning: (text, modelPath))
+                        continuation.resume(returning: RunResult(
+                            text: text,
+                            model: modelPath,
+                            launchMs: launchMs,
+                            inferenceMs: inferenceMs,
+                            outputReadMs: outputReadMs,
+                            metalEnabled: metalEnabled
+                        ))
                     }
                 } catch {
                     continuation.resume(throwing: error)

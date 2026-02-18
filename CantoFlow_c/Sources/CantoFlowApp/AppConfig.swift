@@ -6,8 +6,8 @@ struct AppConfig {
     var sttProfile: STTProfile = .fast
     var sttBackend: STTBackend = .whisper
     var audioDevice: String = "MacBook Air Microphone"
-    var fastIME: Bool = false
-    var autoPaste: Bool = false
+    var fastIME: Bool = true
+    var autoPaste: Bool = true
     var autoReplace: Bool = false
     var polishProvider: PolishProvider = .auto
     var whisperPath: String? = nil
@@ -21,6 +21,9 @@ struct AppConfig {
     var triggerKey: String = "auto"  // "auto", "fn", "f12", "f13", "f14", "f15"
     var showOverlay: Bool = true
     var useVocabulary: Bool = true
+
+    // Metal GPU acceleration
+    var useMetalGPU: Bool = true
 
     enum STTProfile: String, CaseIterable {
         case fast
@@ -91,8 +94,43 @@ struct AppConfig {
         }
     }
 
+    /// Auto-detect project root by looking for third_party/whisper.cpp
+    private static func detectProjectRoot() -> URL {
+        let fm = FileManager.default
+        let cwd = URL(fileURLWithPath: fm.currentDirectoryPath)
+
+        // Check current directory
+        if fm.fileExists(atPath: cwd.appendingPathComponent("third_party/whisper.cpp").path) {
+            return cwd
+        }
+
+        // Check parent directory (if running from CantoFlow_c)
+        let parent = cwd.deletingLastPathComponent()
+        if fm.fileExists(atPath: parent.appendingPathComponent("third_party/whisper.cpp").path) {
+            return parent
+        }
+
+        // Check common locations
+        let home = fm.homeDirectoryForCurrentUser
+        let commonPaths = [
+            home.appendingPathComponent("Documents/CantoFlow"),
+            home.appendingPathComponent("CantoFlow"),
+            URL(fileURLWithPath: "/Users/johnson_tam/Documents/CantoFlow")
+        ]
+
+        for path in commonPaths {
+            if fm.fileExists(atPath: path.appendingPathComponent("third_party/whisper.cpp").path) {
+                return path
+            }
+        }
+
+        // Fallback to current directory
+        print("Warning: Could not auto-detect project root. Use --project-root to specify.")
+        return cwd
+    }
+
     static func fromArgs() -> AppConfig {
-        var config = AppConfig(projectRoot: URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
+        var config = AppConfig(projectRoot: detectProjectRoot())
         var i = 1
         let args = CommandLine.arguments
 
@@ -167,6 +205,8 @@ struct AppConfig {
                 config.showOverlay = false
             case "--no-vocabulary":
                 config.useVocabulary = false
+            case "--no-metal":
+                config.useMetalGPU = false
             case "-h", "--help":
                 printUsage()
                 exit(0)
@@ -205,6 +245,7 @@ struct AppConfig {
           --trigger-key KEY       Trigger key: auto, fn, f12, f13, f14, f15 (default: auto)
           --no-overlay            Disable recording overlay panel
           --no-vocabulary         Disable vocabulary injection
+          --no-metal              Disable Metal GPU acceleration (use CPU only)
           -h, --help              Show this help message
 
         Environment Variables:

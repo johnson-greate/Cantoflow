@@ -333,7 +333,7 @@ final class VocabularyStore {
         terms = terms.filter { seen.insert($0).inserted }
 
         // Build prompt string, respecting max length
-        var prompt = "以下是廣東話的句子。"
+        var prompt = "以下是廣東話的句子，請以繁體中文輸出。"
         var currentLength = prompt.count
 
         for term in terms {

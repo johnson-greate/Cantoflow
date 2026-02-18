@@ -7,16 +7,16 @@ enum WaveformMode {
     case idle       // Static flat line
 }
 
-/// A view that displays real-time audio waveform bars (compact version)
+/// A view that displays real-time audio waveform bars (compact version - 25% smaller)
 final class WaveformView: NSView {
-    /// Number of bars in the waveform (fewer for compact mode)
-    private let barCount: Int = 24
+    /// Number of bars in the waveform (fewer for ultra-compact mode)
+    private let barCount: Int = 18
 
     /// Spacing between bars
-    private let barSpacing: CGFloat = 2
+    private let barSpacing: CGFloat = 1.5
 
     /// Minimum bar height
-    private let minBarHeight: CGFloat = 3
+    private let minBarHeight: CGFloat = 2
 
     /// Maximum bar height (as fraction of view height)
     private let maxBarHeightFraction: CGFloat = 0.85
@@ -27,7 +27,7 @@ final class WaveformView: NSView {
     }
 
     /// Corner radius for each bar (smaller for compact)
-    private let barCornerRadius: CGFloat = 1.5
+    private let barCornerRadius: CGFloat = 1
 
     /// Current audio levels (0.0 to 1.0)
     private var levels: [CGFloat] = []

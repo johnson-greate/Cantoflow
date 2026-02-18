@@ -26,11 +26,27 @@ struct TelemetryEntry: Encodable {
 
     struct LatencyMs: Encodable {
         let record: Int
+        /// Time from stopRecording() completing to whisper-cli being launched
+        let audioFlushMs: Int
         let stt: Int
+        /// Breakdown of where time went inside the stt stage
+        let sttBreakdown: SttBreakdown?
         let polish: Int
         let clipboard: Int
         let firstInsert: Int
         let total: Int
+
+        /// Sub-timing within the whisper-cli execution
+        struct SttBreakdown: Encodable {
+            /// OS process spawn overhead (before first byte of inference)
+            let launchMs: Int
+            /// Actual model load + decode + inference time
+            let inferenceMs: Int
+            /// Reading transcription output file from disk
+            let outputReadMs: Int
+            /// Whether Metal GPU acceleration was active for this run
+            let metalEnabled: Bool
+        }
     }
 
     struct TextStats: Encodable {

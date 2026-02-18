@@ -32,11 +32,11 @@ final class RecordingOverlayPanel: NSPanel {
     var onCancel: (() -> Void)?
     var onDone: (() -> Void)?
 
-    // MARK: - Constants (Compact Capsule Design)
+    // MARK: - Constants (Compact Capsule Design - 25% smaller)
 
-    private static let panelWidth: CGFloat = 280
-    private static let panelHeight: CGFloat = 56
-    private static let cornerRadius: CGFloat = 28  // height / 2 for capsule
+    private static let panelWidth: CGFloat = 210
+    private static let panelHeight: CGFloat = 42
+    private static let cornerRadius: CGFloat = 21  // height / 2 for capsule
     private static let bottomMargin: CGFloat = 80
 
     /// Stored correct position (to prevent drift)
@@ -109,8 +109,8 @@ final class RecordingOverlayPanel: NSPanel {
 
         contentView = containerView
 
-        // Cancel button (left side) - small, circular
-        cancelButton.frame = NSRect(x: 12, y: (Self.panelHeight - 28) / 2, width: 28, height: 28)
+        // Cancel button (left side) - smaller
+        cancelButton.frame = NSRect(x: 8, y: (Self.panelHeight - 22) / 2, width: 22, height: 22)
         cancelButton.bezelStyle = .circular
         cancelButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Cancel")
         cancelButton.imageScaling = .scaleProportionallyDown
@@ -120,8 +120,8 @@ final class RecordingOverlayPanel: NSPanel {
         cancelButton.refusesFirstResponder = true
         containerView.addSubview(cancelButton)
 
-        // Done button (right side) - small, circular
-        doneButton.frame = NSRect(x: Self.panelWidth - 40, y: (Self.panelHeight - 28) / 2, width: 28, height: 28)
+        // Done button (right side) - smaller
+        doneButton.frame = NSRect(x: Self.panelWidth - 30, y: (Self.panelHeight - 22) / 2, width: 22, height: 22)
         doneButton.bezelStyle = .circular
         doneButton.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: "Done")
         doneButton.contentTintColor = .systemGreen
@@ -132,9 +132,9 @@ final class RecordingOverlayPanel: NSPanel {
         doneButton.refusesFirstResponder = true
         containerView.addSubview(doneButton)
 
-        // Waveform view (center, compact)
-        let waveformWidth: CGFloat = 140
-        let waveformHeight: CGFloat = 32
+        // Waveform view (center, compact - 25% smaller)
+        let waveformWidth: CGFloat = 105
+        let waveformHeight: CGFloat = 24
         waveformView.frame = NSRect(
             x: (Self.panelWidth - waveformWidth) / 2,
             y: (Self.panelHeight - waveformHeight) / 2,
@@ -145,10 +145,10 @@ final class RecordingOverlayPanel: NSPanel {
         containerView.addSubview(waveformView)
 
         // Status label (overlaid on waveform, centered)
-        statusLabel.frame = NSRect(x: 48, y: (Self.panelHeight - 20) / 2, width: Self.panelWidth - 96, height: 20)
+        statusLabel.frame = NSRect(x: 36, y: (Self.panelHeight - 16) / 2, width: Self.panelWidth - 72, height: 16)
         statusLabel.stringValue = ""
         statusLabel.alignment = .center
-        statusLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        statusLabel.font = .systemFont(ofSize: 10, weight: .medium)
         statusLabel.textColor = .labelColor
         statusLabel.isBezeled = false
         statusLabel.drawsBackground = false

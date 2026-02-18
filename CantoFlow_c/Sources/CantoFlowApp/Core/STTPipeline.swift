@@ -35,6 +35,7 @@ struct PipelineResult {
     let polishStatus: String
     let fastIMERawStatus: String
     let fastIMEReplaceStatus: String
+    let sttBackend: AppConfig.STTBackend
 }
 
 /// Minimum recording duration in milliseconds
@@ -46,11 +47,19 @@ struct STTResult {
     let rawOutputPath: URL
     let modelUsed: String
     let durationMs: Int
+    /// Sub-timing for whisper runs; nil for FunASR
+    let sttBreakdown: TelemetryEntry.LatencyMs.SttBreakdown?
 }
 
 /// STT pipeline integrating audio capture, whisper/funasr, polishing, and text insertion
 final class STTPipeline {
-    private let config: AppConfig
+    private var config: AppConfig
+
+    /// Runtime backend switching for A/B testing
+    var sttBackend: AppConfig.STTBackend {
+        get { config.sttBackend }
+        set { config.sttBackend = newValue }
+    }
     private let audioCapture = AudioCapture()
     private let whisperRunner: WhisperRunner
     private let funasrRunner: FunASRRunner
@@ -85,7 +94,13 @@ final class STTPipeline {
                 text: result.text,
                 rawOutputPath: result.rawOutputPath,
                 modelUsed: result.modelUsed.lastPathComponent,
-                durationMs: result.durationMs
+                durationMs: result.durationMs,
+                sttBreakdown: TelemetryEntry.LatencyMs.SttBreakdown(
+                    launchMs: result.breakdown.launchMs,
+                    inferenceMs: result.breakdown.inferenceMs,
+                    outputReadMs: result.breakdown.outputReadMs,
+                    metalEnabled: result.breakdown.metalEnabled
+                )
             )
         case .funasr:
             let result = try await funasrRunner.transcribe(audioURL: audioURL, outputPrefix: outputPrefix)
@@ -93,7 +108,8 @@ final class STTPipeline {
                 text: result.text,
                 rawOutputPath: result.rawOutputPath,
                 modelUsed: result.modelUsed,
-                durationMs: result.durationMs
+                durationMs: result.durationMs,
+                sttBreakdown: nil
             )
         }
     }
@@ -121,7 +137,10 @@ final class STTPipeline {
             throw PipelineError.notRecording
         }
 
-        // Stop recording
+        // Capture backend at the moment recording stops (for telemetry accuracy)
+        let backendUsed = config.sttBackend
+
+        // Stop recording — measure both recording duration and flush time
         let stoppedAt = Date()
         let recordingMs = Int(stoppedAt.timeIntervalSince(startTime) * 1000)
 
@@ -132,6 +151,8 @@ final class STTPipeline {
             currentRecordingURL = nil
             throw PipelineError.recordingFailed(error)
         }
+        // audioFlushMs: time for stopRecording() to fully flush WAV to disk
+        let audioFlushMs = Int(Date().timeIntervalSince(stoppedAt) * 1000)
 
         recordingStartTime = nil
         currentRecordingURL = nil
@@ -162,11 +183,15 @@ final class STTPipeline {
         var fastIMEReplaceStatus = "not_run"
         var rawAutoPasted = false
 
-        // Fast IME: insert raw text first
+        // Detect terminal once before STT delay changes frontmost app context
+        let isTerminal = textInserter.isFrontmostAppTerminal()
+
+        // Fast IME: insert raw text first.
+        // Skip in terminal apps — Cmd+Z won't undo text and pasted newlines execute as commands.
         if config.fastIME {
             fastIMERawStatus = "copied"
 
-            if config.autoPaste {
+            if config.autoPaste && !isTerminal {
                 let result = textInserter.insertViaClipboard(text: rawText)
                 if result.success {
                     rawAutoPasted = true
@@ -174,6 +199,8 @@ final class STTPipeline {
                 } else {
                     fastIMERawStatus = "copy_only"
                 }
+            } else if isTerminal {
+                fastIMERawStatus = "skipped_terminal"
             }
         }
 
@@ -190,18 +217,20 @@ final class STTPipeline {
                 if config.fastIME {
                     fastIMEReplaceStatus = "copied"
 
-                    if config.autoPaste && config.autoReplace && rawAutoPasted {
-                        // Undo raw text, then paste polished
-                        if textInserter.undo() {
-                            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
-                            let insertResult = textInserter.insertViaClipboard(text: finalText)
-                            if insertResult.success {
-                                fastIMEReplaceStatus = "undo_then_paste"
+                    if config.autoPaste && config.autoReplace {
+                        if rawAutoPasted {
+                            // Regular app: undo raw paste, then paste polished
+                            if textInserter.undo() {
+                                try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+                                let insertResult = textInserter.insertViaClipboard(text: finalText)
+                                fastIMEReplaceStatus = insertResult.success ? "undo_then_paste" : "undo_only"
                             } else {
-                                fastIMEReplaceStatus = "undo_only"
+                                fastIMEReplaceStatus = "copy_only"
                             }
-                        } else {
-                            fastIMEReplaceStatus = "copy_only"
+                        } else if isTerminal {
+                            // Terminal: raw was skipped, paste polished directly
+                            let insertResult = textInserter.insertViaClipboard(text: finalText)
+                            fastIMEReplaceStatus = insertResult.success ? "terminal_paste" : "copy_only"
                         }
                     }
                 }
@@ -237,7 +266,9 @@ final class STTPipeline {
             ),
             latencyMs: TelemetryEntry.LatencyMs(
                 record: recordingMs,
+                audioFlushMs: audioFlushMs,
                 stt: sttResult.durationMs,
+                sttBreakdown: sttResult.sttBreakdown,
                 polish: polishMs,
                 clipboard: 0,
                 firstInsert: 0,
@@ -271,7 +302,8 @@ final class STTPipeline {
             provider: provider,
             polishStatus: polishStatus,
             fastIMERawStatus: fastIMERawStatus,
-            fastIMEReplaceStatus: fastIMEReplaceStatus
+            fastIMEReplaceStatus: fastIMEReplaceStatus,
+            sttBackend: backendUsed
         )
     }
 
