@@ -141,7 +141,7 @@ final class TextPolisher {
         }
         let apiKey = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let model = ProcessInfo.processInfo.environment["QWEN_MODEL"] ?? "qwen-turbo"
+        let model = ProcessInfo.processInfo.environment["QWEN_MODEL"] ?? "qwen3.5-plus"
 
         let systemPrompt = generateSystemPrompt()
 
@@ -149,6 +149,7 @@ final class TextPolisher {
             "model": model,
             "temperature": 0.2,
             "max_tokens": 1024,
+            "enable_thinking": false,   // disable CoT; qwen3.5 thinking mode is ~100s, not suitable for STT polish
             "messages": [
                 ["role": "system", "content": systemPrompt],
                 ["role": "user", "content": text]
