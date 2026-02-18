@@ -156,9 +156,13 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
 
     private func updateTelemetryItem(_ result: PipelineResult) {
         let backend = result.sttBackend == .whisper ? "Whisper" : "FunASR"
-        let sttSec = String(format: "%.1f", Double(result.sttMs) / 1000.0)
         let chars = result.finalText.count
-        let title = "上次: \(backend) · \(sttSec)s · \(chars)字"
+        let sttSec   = String(format: "%.1f", Double(result.sttMs)   / 1000.0)
+        let polishSec = String(format: "%.1f", Double(result.polishMs) / 1000.0)
+        let totalSec  = String(format: "%.1f", Double(result.sttMs + result.polishMs) / 1000.0)
+
+        let polishLabel = result.polishMs > 0 ? " · Qwen \(polishSec)s" : ""
+        let title = "上次: \(chars)字 · \(backend) \(sttSec)s\(polishLabel) · 共 \(totalSec)s"
         DispatchQueue.main.async { [weak self] in
             self?.telemetryItem?.title = title
         }
