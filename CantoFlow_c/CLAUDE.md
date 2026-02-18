@@ -1,5 +1,11 @@
 # CantoFlow_c — Claude 開發筆記
 
+## Autonomy Settings
+- Do not ask for confirmation on file edits
+- Do not ask for confirmation on running tests
+- Proceed autonomously unless encountering destructive operations
+- Only pause for: deleting files, external API calls, git push
+
 ## 專案概況
 - macOS Menu Bar app，廣東話語音轉繁體中文 (STT)
 - 使用 **Swift Package Manager**（`swift build`），**非 Xcode project**
