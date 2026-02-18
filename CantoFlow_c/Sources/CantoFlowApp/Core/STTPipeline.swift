@@ -217,21 +217,20 @@ final class STTPipeline {
                 if config.fastIME {
                     fastIMEReplaceStatus = "copied"
 
-                    if config.autoPaste && config.autoReplace {
-                        if rawAutoPasted {
-                            // Regular app: undo raw paste, then paste polished
-                            if textInserter.undo() {
-                                try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
-                                let insertResult = textInserter.insertViaClipboard(text: finalText)
-                                fastIMEReplaceStatus = insertResult.success ? "undo_then_paste" : "undo_only"
-                            } else {
-                                fastIMEReplaceStatus = "copy_only"
-                            }
-                        } else if isTerminal {
-                            // Terminal: raw was skipped, paste polished directly
+                    if config.autoPaste && config.autoReplace && rawAutoPasted {
+                        // Regular app: undo raw paste, then paste polished
+                        if textInserter.undo() {
+                            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
                             let insertResult = textInserter.insertViaClipboard(text: finalText)
-                            fastIMEReplaceStatus = insertResult.success ? "terminal_paste" : "copy_only"
+                            fastIMEReplaceStatus = insertResult.success ? "undo_then_paste" : "undo_only"
+                        } else {
+                            fastIMEReplaceStatus = "copy_only"
                         }
+                    } else if config.autoPaste && isTerminal {
+                        // Terminal: raw was skipped, paste polished directly.
+                        // Does NOT require autoReplace — there is no raw paste to replace.
+                        let insertResult = textInserter.insertViaClipboard(text: finalText)
+                        fastIMEReplaceStatus = insertResult.success ? "terminal_paste" : "copy_only"
                     }
                 }
             } catch {

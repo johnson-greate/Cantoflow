@@ -124,9 +124,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         menu.addItem(quit)
 
         // Version info (disabled, for display only)
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
-        let versionItem = NSMenuItem(title: "Version \(version) (\(build))", action: nil, keyEquivalent: "")
+        let versionItem = NSMenuItem(title: "Version \(appShortVersion) (\(appBuildNumber))", action: nil, keyEquivalent: "")
         versionItem.isEnabled = false
         menu.addItem(versionItem)
     }
