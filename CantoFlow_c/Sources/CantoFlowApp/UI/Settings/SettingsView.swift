@@ -131,8 +131,13 @@ struct VocabularyTab: View {
                     }
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                         Button(role: .destructive) {
-                            viewModel.remove(id: entry.id)
-                            if selectedID == entry.id { selectedID = nil }
+                            let id = entry.id
+                            let wasSelected = selectedID == id
+                            if wasSelected { selectedID = nil }
+                            // Defer @Published mutation out of the swipe-animation CA
+                            // transaction to avoid NSConcretePointerArray crash on
+                            // macOS 26 beta (same pattern as add/edit sheets).
+                            DispatchQueue.main.async { viewModel.remove(id: id) }
                         } label: {
                             Label("Delete", systemImage: "trash")
                         }
@@ -151,8 +156,8 @@ struct VocabularyTab: View {
                 onAdd: { showingAddSheet = true },
                 onRemove: {
                     if let id = selectedID {
-                        viewModel.remove(id: id)
                         selectedID = nil
+                        DispatchQueue.main.async { viewModel.remove(id: id) }
                     }
                 }
             )
