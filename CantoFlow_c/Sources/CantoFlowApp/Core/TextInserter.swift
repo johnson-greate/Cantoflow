@@ -24,59 +24,61 @@ struct InsertionResult {
     let success: Bool
 }
 
-/// Text inserter using AX API with Cmd+V fallback
+/// Text inserter using AX API with Cmd+V fallback.
+///
+/// MUST run on the main thread: NSPasteboard, CGEvent.post(), and AX API all
+/// require main-thread access.  Marked @MainActor to enforce this at compile
+/// time and eliminate the IMKCFRunLoopWakeUpReliable mach-port crash that
+/// occurs when these APIs are called from Swift's cooperative thread pool.
+@MainActor
 final class TextInserter {
+    // nonisolated init so STTPipeline can create the instance as a stored property
+    // without requiring @MainActor on STTPipeline itself.  No main-thread APIs are
+    // accessed during initialisation.
+    nonisolated init() {}
+
     private let clipboardGuard = ClipboardGuard()
 
-    /// Insert text into the focused application
-    /// - Parameter text: Text to insert
-    /// - Returns: InsertionResult indicating the method used and success status
+    /// Insert text into the focused application (AX API first, clipboard fallback)
     @discardableResult
-    func insert(text: String) -> InsertionResult {
-        // Try AX API first
+    func insert(text: String) async -> InsertionResult {
         if insertViaAccessibility(text: text) {
             return InsertionResult(method: .axAPI, success: true)
         }
-
-        // Fallback to clipboard + Cmd+V
-        return insertViaClipboard(text: text)
+        return await insertViaClipboard(text: text)
     }
 
-    /// Insert text with clipboard, preserving existing clipboard content
-    /// - Parameter text: Text to insert
-    /// - Returns: InsertionResult
-    func insertViaClipboard(text: String) -> InsertionResult {
-        // Save current clipboard
+    /// Insert text via clipboard + Cmd+V, preserving existing clipboard content.
+    /// Async so we can yield the main thread during the 50ms clipboard-ready delay
+    /// instead of blocking it with Thread.sleep.
+    func insertViaClipboard(text: String) async -> InsertionResult {
         clipboardGuard.save()
 
-        // Copy text to clipboard
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
-        // Small delay to ensure clipboard is ready
-        Thread.sleep(forTimeInterval: 0.05)
+        // Yield main thread briefly to let the pasteboard settle before sending Cmd+V.
+        try? await Task.sleep(nanoseconds: 50_000_000) // 50 ms
 
-        // Send Cmd+V
         let success = sendCmdV()
 
-        // Restore clipboard after a LONG delay to ensure paste completes
-        // CGEvent posting is asynchronous, paste can take 500ms+ in some apps
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+        // Restore clipboard after a delay long enough for the paste to complete.
+        // CGEvent posting is asynchronous; some apps take 500 ms+.
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 s
             self?.clipboardGuard.restore()
         }
 
         return InsertionResult(method: .clipboard, success: success)
     }
 
-    /// Undo the last insertion (for fast IME mode)
+    /// Undo the last insertion (Cmd+Z) for fast IME replace mode.
     func undo() -> Bool {
         return sendCmdZ()
     }
 
     /// Returns true if the frontmost app is a terminal emulator.
-    /// In terminals, Cmd+Z does not undo text and pasted newlines execute commands,
-    /// so fast IME raw-paste must be suppressed.
     func isFrontmostAppTerminal() -> Bool {
         guard let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else {
             return false
@@ -88,12 +90,8 @@ final class TextInserter {
 
     /// Insert text using Accessibility API
     private func insertViaAccessibility(text: String) -> Bool {
-        // Get the focused element
-        guard let focusedElement = getFocusedElement() else {
-            return false
-        }
+        guard let focusedElement = getFocusedElement() else { return false }
 
-        // Check if element is editable
         var isEditable: AnyObject?
         let editableResult = AXUIElementCopyAttributeValue(
             focusedElement,
@@ -107,7 +105,6 @@ final class TextInserter {
             return false
         }
 
-        // Get current selection range (not used but needed for AX context)
         var selectedRange: AnyObject?
         _ = AXUIElementCopyAttributeValue(
             focusedElement,
@@ -115,7 +112,6 @@ final class TextInserter {
             &selectedRange
         )
 
-        // Try to set selected text (replaces selection or inserts at cursor)
         let setResult = AXUIElementSetAttributeValue(
             focusedElement,
             kAXSelectedTextAttribute as CFString,
@@ -125,76 +121,45 @@ final class TextInserter {
         return setResult == .success
     }
 
-    /// Get the currently focused accessibility element
     private func getFocusedElement() -> AXUIElement? {
         let systemElement = AXUIElementCreateSystemWide()
 
         var focusedApp: AnyObject?
-        let appResult = AXUIElementCopyAttributeValue(
-            systemElement,
-            kAXFocusedApplicationAttribute as CFString,
-            &focusedApp
-        )
-
-        guard appResult == .success, let app = focusedApp else {
-            return nil
-        }
+        guard AXUIElementCopyAttributeValue(
+            systemElement, kAXFocusedApplicationAttribute as CFString, &focusedApp
+        ) == .success, let app = focusedApp else { return nil }
 
         var focusedElement: AnyObject?
-        let elementResult = AXUIElementCopyAttributeValue(
-            app as! AXUIElement,
-            kAXFocusedUIElementAttribute as CFString,
-            &focusedElement
-        )
-
-        guard elementResult == .success, let element = focusedElement else {
-            return nil
-        }
+        guard AXUIElementCopyAttributeValue(
+            app as! AXUIElement, kAXFocusedUIElementAttribute as CFString, &focusedElement
+        ) == .success, let element = focusedElement else { return nil }
 
         return (element as! AXUIElement)
     }
 
-    /// Send Cmd+V keystroke
     private func sendCmdV() -> Bool {
         let source = CGEventSource(stateID: .hidSystemState)
-
-        // Key down
-        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true) else {
+        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true),
+              let keyUp   = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false) else {
             return false
         }
         keyDown.flags = .maskCommand
-
-        // Key up
-        guard let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false) else {
-            return false
-        }
-        keyUp.flags = .maskCommand
-
+        keyUp.flags   = .maskCommand
         keyDown.post(tap: .cghidEventTap)
         keyUp.post(tap: .cghidEventTap)
-
         return true
     }
 
-    /// Send Cmd+Z keystroke (undo)
     private func sendCmdZ() -> Bool {
         let source = CGEventSource(stateID: .hidSystemState)
-
-        // Key down
-        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x06, keyDown: true) else {
+        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x06, keyDown: true),
+              let keyUp   = CGEvent(keyboardEventSource: source, virtualKey: 0x06, keyDown: false) else {
             return false
         }
         keyDown.flags = .maskCommand
-
-        // Key up
-        guard let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x06, keyDown: false) else {
-            return false
-        }
-        keyUp.flags = .maskCommand
-
+        keyUp.flags   = .maskCommand
         keyDown.post(tap: .cghidEventTap)
         keyUp.post(tap: .cghidEventTap)
-
         return true
     }
 }

@@ -2,14 +2,13 @@ import SwiftUI
 
 // MARK: - Settings Store
 
-/// Observable bridge between the SwiftUI Settings UI and the live AppKit pipeline.
-final class SettingsStore: ObservableObject {
-    @Published var sttBackend: String
+/// Plain (non-ObservableObject) callback bridge between the Settings UI and the
+/// live AppKit pipeline.  Previously ObservableObject, which caused
+/// NSConcretePointerArray Combine subscriber crashes on macOS 26 beta whenever
+/// a CA transaction committed while the settings window was open.
+/// ModelsTab now binds directly to @AppStorage("sttBackend") instead.
+final class SettingsStore {
     var onSttBackendChange: ((String) -> Void)?
-
-    init(sttBackend: String = "whisper") {
-        self.sttBackend = sttBackend
-    }
 }
 
 // MARK: - Root Settings View
@@ -349,7 +348,9 @@ struct AddEditTermSheet: View {
 // MARK: - Models Tab
 
 struct ModelsTab: View {
-    @EnvironmentObject private var store: SettingsStore
+    // @AppStorage binds directly to UserDefaults — no ObservableObject/Combine
+    // subscriber involved, so no NSConcretePointerArray crash risk.
+    @AppStorage("sttBackend") private var sttBackend: String = "whisper"
     @AppStorage("qwenAPIKey") private var qwenAPIKey: String = ""
     @AppStorage("openaiAPIKey") private var openaiAPIKey: String = ""
     @AppStorage("anthropicAPIKey") private var anthropicAPIKey: String = ""
@@ -357,12 +358,12 @@ struct ModelsTab: View {
     var body: some View {
         Form {
             Section {
-                Picker("STT Backend", selection: $store.sttBackend) {
+                Picker("STT Backend", selection: $sttBackend) {
                     Text("Whisper (Local)").tag("whisper")
                     Text("FunASR (Server)").tag("funasr")
                 }
-                .onChange(of: store.sttBackend) { newValue in
-                    store.onSttBackendChange?(newValue)
+                .onChange(of: sttBackend) { newValue in
+                    SettingsWindowController.shared.onSttBackendChange?(newValue)
                 }
 
                 Text("Whisper runs fully offline. FunASR requires the companion Python server on localhost:10095.")
@@ -377,7 +378,7 @@ struct ModelsTab: View {
                 SecureField("OpenAI API Key (OPENAI_API_KEY)", text: $openaiAPIKey)
                 SecureField("Anthropic API Key (ANTHROPIC_API_KEY)", text: $anthropicAPIKey)
 
-                Text("Stored in app preferences. Overrides environment variables. Takes effect on next launch.")
+                Text("Stored in app preferences. Environment variables take precedence. Takes effect immediately.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } header: {

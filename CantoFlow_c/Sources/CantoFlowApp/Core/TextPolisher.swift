@@ -103,24 +103,40 @@ final class TextPolisher {
         )
     }
 
-    /// Resolve which provider to use based on config and available API keys
+    /// Resolve the API key for a given provider.
+    /// Environment variable takes precedence; falls back to UserDefaults
+    /// (set via Settings UI → LLM Polish API Keys section).
+    private func resolvedAPIKey(envVar: String, userDefaultsKey: String) -> String? {
+        if let envKey = ProcessInfo.processInfo.environment[envVar],
+           !envKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return envKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let stored = UserDefaults.standard.string(forKey: userDefaultsKey),
+           !stored.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return stored.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
+    }
+
+    /// Resolve which provider to use based on config and available API keys.
+    /// Checks both environment variables and UserDefaults (Settings UI keys).
     private func resolveProvider() -> AppConfig.PolishProvider {
         switch config.polishProvider {
         case .qwen:
-            return .qwen
+            return resolvedAPIKey(envVar: "QWEN_API_KEY", userDefaultsKey: "qwenAPIKey") != nil ? .qwen : .none
         case .openai:
-            return .openai
+            return resolvedAPIKey(envVar: "OPENAI_API_KEY", userDefaultsKey: "openaiAPIKey") != nil ? .openai : .none
         case .anthropic:
-            return .anthropic
+            return resolvedAPIKey(envVar: "ANTHROPIC_API_KEY", userDefaultsKey: "anthropicAPIKey") != nil ? .anthropic : .none
         case .none:
             return .none
         case .auto:
             // Priority: Qwen > OpenAI > Anthropic
-            if ProcessInfo.processInfo.environment["QWEN_API_KEY"] != nil {
+            if resolvedAPIKey(envVar: "QWEN_API_KEY", userDefaultsKey: "qwenAPIKey") != nil {
                 return .qwen
-            } else if ProcessInfo.processInfo.environment["OPENAI_API_KEY"] != nil {
+            } else if resolvedAPIKey(envVar: "OPENAI_API_KEY", userDefaultsKey: "openaiAPIKey") != nil {
                 return .openai
-            } else if ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] != nil {
+            } else if resolvedAPIKey(envVar: "ANTHROPIC_API_KEY", userDefaultsKey: "anthropicAPIKey") != nil {
                 return .anthropic
             } else {
                 return .none
@@ -128,7 +144,7 @@ final class TextPolisher {
         }
     }
 
-    /// Check if polishing is available (API key exists)
+    /// Check if polishing is available (API key exists in env or UserDefaults)
     func isAvailable() -> Bool {
         return resolveProvider() != .none
     }
@@ -136,10 +152,9 @@ final class TextPolisher {
     // MARK: - Qwen API (DashScope OpenAI-compatible)
 
     private func callQwen(text: String) async throws -> String {
-        guard let rawKey = ProcessInfo.processInfo.environment["QWEN_API_KEY"] else {
+        guard let apiKey = resolvedAPIKey(envVar: "QWEN_API_KEY", userDefaultsKey: "qwenAPIKey") else {
             throw PolishError.noAPIKey
         }
-        let apiKey = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let model = ProcessInfo.processInfo.environment["QWEN_MODEL"] ?? "qwen3.5-plus"
 
@@ -198,10 +213,9 @@ final class TextPolisher {
     // MARK: - OpenAI API
 
     private func callOpenAI(text: String) async throws -> String {
-        guard let rawKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"] else {
+        guard let apiKey = resolvedAPIKey(envVar: "OPENAI_API_KEY", userDefaultsKey: "openaiAPIKey") else {
             throw PolishError.noAPIKey
         }
-        let apiKey = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let model = ProcessInfo.processInfo.environment["OPENAI_MODEL"] ?? "gpt-4o-mini"
         let systemPrompt = generateSystemPrompt()
@@ -258,10 +272,9 @@ final class TextPolisher {
     // MARK: - Anthropic API
 
     private func callAnthropic(text: String) async throws -> String {
-        guard let rawKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] else {
+        guard let apiKey = resolvedAPIKey(envVar: "ANTHROPIC_API_KEY", userDefaultsKey: "anthropicAPIKey") else {
             throw PolishError.noAPIKey
         }
-        let apiKey = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let model = ProcessInfo.processInfo.environment["ANTHROPIC_MODEL"] ?? "claude-sonnet-4-5-20250929"
         let systemPrompt = generateSystemPrompt()

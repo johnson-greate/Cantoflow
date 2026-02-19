@@ -14,16 +14,21 @@ import SwiftUI
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     static let shared = SettingsWindowController()
 
-    /// Long-lived store shared with the Settings scene in CantoFlowApp.body.
-    let settingsStore = SettingsStore()
+    /// Callback wired by MenuBarController so ModelsTab's picker can switch
+    /// backends at runtime.  ModelsTab calls this via .onChange(of: sttBackend).
+    var onSttBackendChange: ((String) -> Void)?
 
     private var window: NSWindow?
 
     /// Set by MenuBarController so the Models tab can switch backends at runtime.
     weak var pipeline: STTPipeline? {
         didSet {
-            settingsStore.sttBackend = pipeline?.sttBackend == .funasr ? "funasr" : "whisper"
-            settingsStore.onSttBackendChange = { [weak self] newBackend in
+            // Sync pipeline state → UserDefaults so @AppStorage("sttBackend") in
+            // ModelsTab immediately reflects the live backend.
+            let key = pipeline?.sttBackend == .funasr ? "funasr" : "whisper"
+            UserDefaults.standard.set(key, forKey: "sttBackend")
+
+            onSttBackendChange = { [weak self] newBackend in
                 self?.pipeline?.sttBackend = newBackend == "funasr" ? .funasr : .whisper
             }
         }
@@ -34,7 +39,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     func show() {
         // Sync backend state before opening (it may have been changed from the menu).
         if let pl = pipeline {
-            settingsStore.sttBackend = pl.sttBackend == .funasr ? "funasr" : "whisper"
+            let key = pl.sttBackend == .funasr ? "funasr" : "whisper"
+            UserDefaults.standard.set(key, forKey: "sttBackend")
         }
 
         // Bring existing window to front if already visible.
@@ -45,9 +51,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         }
 
         // Embed the SwiftUI view in an NSWindow via NSHostingController.
-        let hosting = NSHostingController(
-            rootView: SettingsView().environmentObject(settingsStore)
-        )
+        // No environmentObject needed: ModelsTab uses @AppStorage directly;
+        // SettingsStore is no longer ObservableObject.
+        let hosting = NSHostingController(rootView: SettingsView())
 
         let win = NSWindow(
             contentRect: .zero,

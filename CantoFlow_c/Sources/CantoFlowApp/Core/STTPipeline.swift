@@ -183,16 +183,19 @@ final class STTPipeline {
         var fastIMEReplaceStatus = "not_run"
         var rawAutoPasted = false
 
-        // Detect terminal once before STT delay changes frontmost app context
-        let isTerminal = textInserter.isFrontmostAppTerminal()
+        // Detect terminal on the main thread — NSWorkspace.frontmostApplication must
+        // be read from main thread, and we need the answer before Whisper runs because
+        // by then the frontmost app context may have changed.
+        let isTerminal = await MainActor.run { textInserter.isFrontmostAppTerminal() }
 
         // Fast IME: insert raw text first.
         // Skip in terminal apps — Cmd+Z won't undo text and pasted newlines execute as commands.
+        // All insertViaClipboard calls hop to @MainActor (NSPasteboard + CGEvent require main thread).
         if config.fastIME {
             fastIMERawStatus = "copied"
 
             if config.autoPaste && !isTerminal {
-                let result = textInserter.insertViaClipboard(text: rawText)
+                let result = await textInserter.insertViaClipboard(text: rawText)
                 if result.success {
                     rawAutoPasted = true
                     fastIMERawStatus = "auto_pasted"
@@ -217,9 +220,10 @@ final class STTPipeline {
                 // Terminal is handled separately below so it works even without polish.
                 if config.fastIME && config.autoPaste && config.autoReplace && rawAutoPasted {
                     fastIMEReplaceStatus = "copied"
-                    if textInserter.undo() {
+                    let undoSuccess = await MainActor.run { textInserter.undo() }
+                    if undoSuccess {
                         try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
-                        let insertResult = textInserter.insertViaClipboard(text: finalText)
+                        let insertResult = await textInserter.insertViaClipboard(text: finalText)
                         fastIMEReplaceStatus = insertResult.success ? "undo_then_paste" : "undo_only"
                     } else {
                         fastIMEReplaceStatus = "copy_only"
@@ -237,13 +241,13 @@ final class STTPipeline {
         // commands; paste the final text (raw or polished) here instead.
         if config.fastIME && config.autoPaste && isTerminal {
             fastIMEReplaceStatus = "copied"
-            let insertResult = textInserter.insertViaClipboard(text: finalText)
+            let insertResult = await textInserter.insertViaClipboard(text: finalText)
             fastIMEReplaceStatus = insertResult.success ? "terminal_paste" : "copy_only"
         }
 
         // If not in fast IME mode, insert final text directly
         if !config.fastIME {
-            let insertResult = textInserter.insertViaClipboard(text: finalText)
+            let insertResult = await textInserter.insertViaClipboard(text: finalText)
             if !insertResult.success {
                 print("Warning: Failed to auto-insert text, copied to clipboard instead")
             }
