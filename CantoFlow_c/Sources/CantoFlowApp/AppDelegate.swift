@@ -19,6 +19,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // gate; this call ensures it is also set at runtime).
         NSApp.setActivationPolicy(.accessory)
 
+        // Pre-warm the overlay panel singleton on the main thread.
+        // RecordingOverlayPanel.shared is a static let — accessing it here guarantees
+        // AppKit initialisation happens on the main thread (required for NSPanel/NSView
+        // setup), and keeps the object alive for the entire process lifetime.
+        // This satisfies the Red Team requirement: "keep a strong reference in the
+        // App Delegate so it never gets unexpectedly deallocated."
+        _ = RecordingOverlayPanel.shared
+
         // Create output directory
         try? FileManager.default.createDirectory(at: config.outDir, withIntermediateDirectories: true)
 

@@ -22,12 +22,13 @@ final class OverlayManager {
     /// Current display mode
     var displayMode: OverlayDisplayMode = .full
 
-    /// The current overlay panel (if any)
-    private var overlayPanel: RecordingOverlayPanel?
-
-    /// Callbacks
-    var onCancel: (() -> Void)?
-    var onDone: (() -> Void)?
+    /// Callbacks (forwarded to RecordingOverlayPanel.shared)
+    var onCancel: (() -> Void)? {
+        didSet { RecordingOverlayPanel.shared.onCancel = onCancel }
+    }
+    var onDone: (() -> Void)? {
+        didSet { RecordingOverlayPanel.shared.onDone = onDone }
+    }
 
     private init() {}
 
@@ -36,65 +37,51 @@ final class OverlayManager {
     /// Show the recording overlay
     func showRecordingOverlay() {
         guard displayMode == .full else { return }
-
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-
-            // Create new panel if needed
-            if self.overlayPanel == nil {
-                self.overlayPanel = RecordingOverlayPanel.create()
-                self.overlayPanel?.onCancel = { [weak self] in
-                    self?.onCancel?()
-                }
-                self.overlayPanel?.onDone = { [weak self] in
-                    self?.onDone?()
-                }
-            }
-
-            self.overlayPanel?.setState(.recording)
-            self.overlayPanel?.showWithAnimation()
+        DispatchQueue.main.async {
+            RecordingOverlayPanel.shared.setState(.recording)
+            RecordingOverlayPanel.shared.showWithAnimation()
         }
     }
 
     /// Update overlay to transcribing state
     func setTranscribing() {
-        DispatchQueue.main.async { [weak self] in
-            self?.overlayPanel?.setState(.transcribing)
+        DispatchQueue.main.async {
+            RecordingOverlayPanel.shared.setState(.transcribing)
         }
     }
 
     /// Update overlay to polishing state
     func setPolishing() {
-        DispatchQueue.main.async { [weak self] in
-            self?.overlayPanel?.setState(.polishing)
+        DispatchQueue.main.async {
+            RecordingOverlayPanel.shared.setState(.polishing)
         }
     }
 
     /// Update overlay to complete state
     func setComplete() {
-        DispatchQueue.main.async { [weak self] in
-            self?.overlayPanel?.setState(.complete)
+        DispatchQueue.main.async {
+            RecordingOverlayPanel.shared.setState(.complete)
         }
     }
 
     /// Hide the recording overlay
     func hideOverlay() {
-        DispatchQueue.main.async { [weak self] in
-            self?.overlayPanel?.hideWithAnimation()
+        DispatchQueue.main.async {
+            RecordingOverlayPanel.shared.hideWithAnimation()
         }
     }
 
     /// Cancel and hide the overlay
     func cancelOverlay() {
-        DispatchQueue.main.async { [weak self] in
-            self?.overlayPanel?.setState(.cancelled)
+        DispatchQueue.main.async {
+            RecordingOverlayPanel.shared.setState(.cancelled)
         }
     }
 
     /// Update waveform with audio level
     func updateAudioLevel(_ level: Float) {
-        DispatchQueue.main.async { [weak self] in
-            self?.overlayPanel?.updateAudioLevel(level)
+        DispatchQueue.main.async {
+            RecordingOverlayPanel.shared.updateAudioLevel(level)
         }
     }
 }

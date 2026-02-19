@@ -45,6 +45,22 @@ final class RecordingOverlayPanel: NSPanel {
     /// Stored correct position (to prevent drift)
     private var targetFrame: NSRect = .zero
 
+    // MARK: - Singleton
+
+    /// The single shared overlay panel. Allocated once at startup and never deallocated.
+    ///
+    /// Keeping a static strong reference, combined with `isReleasedWhenClosed = false`,
+    /// ensures AppKit never destroys the underlying NSPanel C++ object while a
+    /// CA::Transaction or a lingering closure still references it.  Creating and
+    /// destroying the panel on every dictation was the root cause of the
+    /// `_Block_release` crash inside `CA::Transaction::commit`.
+    static let shared = RecordingOverlayPanel(
+        contentRect: .zero,
+        styleMask: [],
+        backing: .buffered,
+        defer: false
+    )
+
     // MARK: - Initialization
 
     override init(
@@ -64,27 +80,16 @@ final class RecordingOverlayPanel: NSPanel {
         setupUI()
     }
 
-    /// Create a recording overlay panel positioned at the bottom of the screen
-    static func create() -> RecordingOverlayPanel {
-        // Get the screen with the mouse
-        let mouseLocation = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(mouseLocation, $0.frame, false) } ?? NSScreen.main
-
-        let screenFrame = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1920, height: 1080)
-
-        // Position at bottom center
-        let x = screenFrame.origin.x + (screenFrame.width - panelWidth) / 2
-        let y = screenFrame.origin.y + bottomMargin
-
-        let rect = NSRect(x: x, y: y, width: panelWidth, height: panelHeight)
-        let panel = RecordingOverlayPanel(contentRect: rect, styleMask: [], backing: .buffered, defer: false)
-        panel.targetFrame = rect  // Store the correct position
-        return panel
-    }
-
     // MARK: - Setup
 
     private func setupPanel() {
+        // CRITICAL: Prevent AppKit from releasing the panel's underlying C++ object
+        // when it is closed or hidden via orderOut().  Without this, AppKit decrements
+        // the retain count on close, causing a use-after-free the next time a CA
+        // animation or a pending GCD block references the (now-freed) panel object,
+        // resulting in _Block_release crashing inside CA::Transaction::commit.
+        isReleasedWhenClosed = false
+
         // Panel settings - critical for not stealing focus
         level = .floating
         isOpaque = false

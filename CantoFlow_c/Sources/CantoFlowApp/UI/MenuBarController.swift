@@ -24,9 +24,6 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
     // Last transcription telemetry display
     private var telemetryItem: NSMenuItem?
 
-    /// Overlay panel for recording feedback
-    private var overlayPanel: RecordingOverlayPanel?
-
     /// Reference to PushToTalkManager (set by AppDelegate)
     weak var pushToTalkManager: PushToTalkManager?
 
@@ -54,6 +51,12 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
             self.setupMenu()
             // Wire the settings window to the live pipeline
             SettingsWindowController.shared.pipeline = self.pipeline
+            // Wire overlay panel callbacks once. The panel is a singleton that lives
+            // for the entire app lifetime, so [weak self] on MenuBarController is
+            // sufficient — no need to create/destroy the panel per recording.
+            let panel = RecordingOverlayPanel.shared
+            panel.onCancel = { [weak self] in self?.cancelRecording() }
+            panel.onDone   = { [weak self] in self?.stopRecordingAndProcess() }
         }
     }
 
@@ -277,29 +280,15 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
 
     private func showRecordingOverlay() {
         guard showOverlay else { return }
-
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-
-            if self.overlayPanel == nil {
-                self.overlayPanel = RecordingOverlayPanel.create()
-                self.overlayPanel?.onCancel = { [weak self] in
-                    self?.cancelRecording()
-                }
-                self.overlayPanel?.onDone = { [weak self] in
-                    self?.stopRecordingAndProcess()
-                }
-            }
-
-            self.overlayPanel?.setState(.recording)
-            self.overlayPanel?.showWithAnimation()
-        }
+        // Use the singleton — no creation/destruction per recording.
+        // The panel is retained for the lifetime of the process.
+        let panel = RecordingOverlayPanel.shared
+        panel.setState(.recording)
+        panel.showWithAnimation()
     }
 
     private func hideOverlay() {
-        DispatchQueue.main.async { [weak self] in
-            self?.overlayPanel?.hideWithAnimation()
-        }
+        RecordingOverlayPanel.shared.hideWithAnimation()
     }
 
     // MARK: - Actions
@@ -358,9 +347,10 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         guard state == .idle else { return }
 
         do {
-            // Set up audio level callback for waveform visualization BEFORE starting
-            pipeline.onAudioLevelUpdate = { [weak self] level in
-                self?.overlayPanel?.updateAudioLevel(level)
+            // Set up audio level callback for waveform visualization BEFORE starting.
+            // RecordingOverlayPanel.shared is always alive; no weak capture needed.
+            pipeline.onAudioLevelUpdate = { level in
+                RecordingOverlayPanel.shared.updateAudioLevel(level)
             }
 
             try pipeline.startRecording()
@@ -376,7 +366,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         guard state == .recording else { return }
 
         state = .processing
-        overlayPanel?.setState(.transcribing)
+        RecordingOverlayPanel.shared.setState(.transcribing)
 
         Task { [weak self] in
             guard let self else { return }
@@ -384,7 +374,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
                 let result = try await self.pipeline.stopAndProcess()
                 await MainActor.run { [weak self] in
                     guard let self else { return }
-                    self.overlayPanel?.setState(.complete)
+                    RecordingOverlayPanel.shared.setState(.complete)
                     self.updateTelemetryItem(result)
                     NotificationManager.shared.notifySuccess(
                         recordMs: result.recordingMs,
