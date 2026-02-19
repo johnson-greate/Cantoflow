@@ -32,6 +32,9 @@ final class RecordingOverlayPanel: NSPanel {
     var onCancel: (() -> Void)?
     var onDone: (() -> Void)?
 
+    /// Cancellable work item for the .complete auto-hide delay
+    private var autoHideWorkItem: DispatchWorkItem?
+
     // MARK: - Constants (Compact Capsule Design - 25% smaller)
 
     private static let panelWidth: CGFloat = 210
@@ -164,51 +167,64 @@ final class RecordingOverlayPanel: NSPanel {
         overlayState = state
     }
 
+    /// Update UI for the current overlay state.
+    /// MUST be called from the main thread — setState() callers are all main-thread.
+    /// Running UI mutations synchronously (no DispatchQueue.main.async wrapper) prevents
+    /// the GCD block from being released inside a CA::Transaction::commit, which was the
+    /// root cause of the _Block_release crash observed on macOS 26 beta.
     private func updateUIForState() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
+        assert(Thread.isMainThread, "updateUIForState must be called on the main thread")
 
-            switch self.overlayState {
-            case .recording:
-                self.statusLabel.isHidden = true
-                self.waveformView.isHidden = false
-                self.cancelButton.isEnabled = true
-                self.doneButton.isEnabled = true
-                self.waveformView.barColor = .systemBlue
-                self.waveformView.setMode(.live)
+        // Cancel any pending auto-hide from a previous .complete state.
+        // Without this, a second recording starting before the 0.4 s timer fires
+        // would have its panel hidden mid-recording.
+        autoHideWorkItem?.cancel()
+        autoHideWorkItem = nil
 
-            case .transcribing:
-                self.statusLabel.stringValue = "Transcribing..."
-                self.statusLabel.isHidden = false
-                self.waveformView.isHidden = false
-                self.cancelButton.isEnabled = false
-                self.doneButton.isEnabled = false
-                self.waveformView.barColor = .systemGray
-                self.waveformView.setMode(.processing)
+        switch overlayState {
+        case .recording:
+            statusLabel.isHidden = true
+            waveformView.isHidden = false
+            cancelButton.isEnabled = true
+            doneButton.isEnabled = true
+            waveformView.barColor = .systemBlue
+            waveformView.setMode(.live)
 
-            case .polishing:
-                self.statusLabel.stringValue = "Polishing..."
-                self.statusLabel.isHidden = false
-                self.waveformView.isHidden = false
-                self.cancelButton.isEnabled = false
-                self.doneButton.isEnabled = false
-                self.waveformView.barColor = .systemOrange
-                self.waveformView.setMode(.processing)
+        case .transcribing:
+            statusLabel.stringValue = "Transcribing..."
+            statusLabel.isHidden = false
+            waveformView.isHidden = false
+            cancelButton.isEnabled = false
+            doneButton.isEnabled = false
+            waveformView.barColor = .systemGray
+            waveformView.setMode(.processing)
 
-            case .complete:
-                self.statusLabel.stringValue = "✓ Done"
-                self.statusLabel.isHidden = false
-                self.waveformView.isHidden = true
-                self.cancelButton.isEnabled = false
-                self.doneButton.isEnabled = false
-                // Auto-hide after short delay
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-                    self?.hideWithAnimation()
-                }
+        case .polishing:
+            statusLabel.stringValue = "Polishing..."
+            statusLabel.isHidden = false
+            waveformView.isHidden = false
+            cancelButton.isEnabled = false
+            doneButton.isEnabled = false
+            waveformView.barColor = .systemOrange
+            waveformView.setMode(.processing)
 
-            case .cancelled:
-                self.hideWithAnimation()
+        case .complete:
+            statusLabel.stringValue = "✓ Done"
+            statusLabel.isHidden = false
+            waveformView.isHidden = true
+            cancelButton.isEnabled = false
+            doneButton.isEnabled = false
+            // Cancellable auto-hide: if setState(.recording) is called before
+            // 0.4 s elapses (second recording started quickly), cancel() prevents
+            // the hide from firing on the newly-shown panel.
+            let item = DispatchWorkItem { [weak self] in
+                self?.hideWithAnimation()
             }
+            autoHideWorkItem = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: item)
+
+        case .cancelled:
+            hideWithAnimation()
         }
     }
 

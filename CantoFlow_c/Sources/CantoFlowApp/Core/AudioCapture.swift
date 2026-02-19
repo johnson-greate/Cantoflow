@@ -126,8 +126,8 @@ final class AudioCapture {
                 let boosted = pow(rms * 8.0, 0.5)  // Boost and apply sqrt for better dynamic range
                 let normalized = min(1.0, max(0.0, boosted))
 
-                DispatchQueue.main.async {
-                    self.onAudioLevelUpdate?(normalized)
+                DispatchQueue.main.async { [weak self] in
+                    self?.onAudioLevelUpdate?(normalized)
                 }
             }
 

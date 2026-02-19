@@ -35,9 +35,11 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
 
     private var state: UIState = .idle {
         didSet {
-            DispatchQueue.main.async { [weak self] in
-                self?.updateStatusUI()
-            }
+            // state is only ever mutated on the main thread (startRecordingNow,
+            // stopRecordingAndProcess via MainActor.run, cancelRecording).
+            // Calling updateStatusUI() directly avoids creating a GCD block that
+            // could be released during a CA::Transaction::commit and cause a crash.
+            updateStatusUI()
         }
     }
 
@@ -46,11 +48,12 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         self.pipeline = pipeline
         super.init()
 
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
             self.setupStatusItem()
             self.setupMenu()
             // Wire the settings window to the live pipeline
-            SettingsWindowController.shared.pipeline = pipeline
+            SettingsWindowController.shared.pipeline = self.pipeline
         }
     }
 
@@ -221,9 +224,9 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         let polishLabel = result.polishMs > 0 ? " · LLM \(polishSec)s" : ""
         let title = "上次: \(chars)字 · \(backend) \(sttSec)s\(polishLabel) · 共 \(totalSec)s"
 
-        DispatchQueue.main.async { [weak self] in
-            self?.telemetryItem?.title = title
-        }
+        // Called from inside MainActor.run {} — already on main thread.
+        // Direct assignment avoids an extra GCD block lifecycle.
+        telemetryItem?.title = title
     }
 
     // MARK: - UI Updates
@@ -375,38 +378,42 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         state = .processing
         overlayPanel?.setState(.transcribing)
 
-        Task {
+        Task { [weak self] in
+            guard let self else { return }
             do {
-                let result = try await pipeline.stopAndProcess()
-                await MainActor.run {
-                    overlayPanel?.setState(.complete)
-                    updateTelemetryItem(result)
+                let result = try await self.pipeline.stopAndProcess()
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.overlayPanel?.setState(.complete)
+                    self.updateTelemetryItem(result)
                     NotificationManager.shared.notifySuccess(
                         recordMs: result.recordingMs,
                         sttMs: result.sttMs,
                         polishMs: result.polishMs
                     )
-                    state = .idle
-                    pushToTalkManager?.markProcessingComplete()
+                    self.state = .idle
+                    self.pushToTalkManager?.markProcessingComplete()
                 }
             } catch let error as PipelineError {
-                await MainActor.run {
-                    hideOverlay()
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.hideOverlay()
                     switch error {
                     case .recordingTooShort(let ms):
                         NotificationManager.shared.notify("Recording too short (\(ms)ms). Hold for at least 0.3s.")
                     default:
                         NotificationManager.shared.notifyError(error.localizedDescription)
                     }
-                    state = .idle
-                    pushToTalkManager?.markProcessingComplete()
+                    self.state = .idle
+                    self.pushToTalkManager?.markProcessingComplete()
                 }
             } catch {
-                await MainActor.run {
-                    hideOverlay()
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.hideOverlay()
                     NotificationManager.shared.notifyError(error.localizedDescription)
-                    state = .idle
-                    pushToTalkManager?.markProcessingComplete()
+                    self.state = .idle
+                    self.pushToTalkManager?.markProcessingComplete()
                 }
             }
         }
