@@ -1,19 +1,22 @@
 import AppKit
 
-/// Application delegate that sets up the app as an accessory (menu bar only)
+/// Application delegate that sets up the app as an accessory (menu bar only).
+/// Config is now parsed internally so NSApplicationDelegateAdaptor can
+/// instantiate the delegate with its required no-argument initialiser.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let config: AppConfig
     private var menuBarController: MenuBarController?
     private var pushToTalkManager: PushToTalkManager?
     private var pipeline: STTPipeline?
 
-    init(config: AppConfig) {
-        self.config = config
+    override init() {
+        self.config = AppConfig.fromArgs()
         super.init()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Set as accessory app (no dock icon, menu bar only)
+        // Accessory app — no dock icon (Info.plist LSUIElement=YES is the primary
+        // gate; this call ensures it is also set at runtime).
         NSApp.setActivationPolicy(.accessory)
 
         // Create output directory
@@ -61,7 +64,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Resolve trigger key based on config or auto-detect
     private func resolveTriggerKey() -> TriggerKeyType {
-        // Check if user specified a trigger key
         switch config.triggerKey.lowercased() {
         case "fn": return .fn
         case "f12": return .f12
@@ -71,12 +73,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "auto":
             fallthrough
         default:
-            // Auto-detect based on hardware
             let model = getHardwareModel()
             if model.contains("MacBook") {
                 return .fn
             } else {
-                // Mac Mini, Mac Pro, etc. - likely using external keyboard
                 return .f15
             }
         }

@@ -213,30 +213,32 @@ final class STTPipeline {
                 provider = polishResult.provider.rawValue
                 polishStatus = "ok"
 
-                // Fast IME: replace raw with polished
-                if config.fastIME {
+                // Fast IME: replace raw with polished (regular apps only).
+                // Terminal is handled separately below so it works even without polish.
+                if config.fastIME && config.autoPaste && config.autoReplace && rawAutoPasted {
                     fastIMEReplaceStatus = "copied"
-
-                    if config.autoPaste && config.autoReplace && rawAutoPasted {
-                        // Regular app: undo raw paste, then paste polished
-                        if textInserter.undo() {
-                            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
-                            let insertResult = textInserter.insertViaClipboard(text: finalText)
-                            fastIMEReplaceStatus = insertResult.success ? "undo_then_paste" : "undo_only"
-                        } else {
-                            fastIMEReplaceStatus = "copy_only"
-                        }
-                    } else if config.autoPaste && isTerminal {
-                        // Terminal: raw was skipped, paste polished directly.
-                        // Does NOT require autoReplace — there is no raw paste to replace.
+                    if textInserter.undo() {
+                        try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
                         let insertResult = textInserter.insertViaClipboard(text: finalText)
-                        fastIMEReplaceStatus = insertResult.success ? "terminal_paste" : "copy_only"
+                        fastIMEReplaceStatus = insertResult.success ? "undo_then_paste" : "undo_only"
+                    } else {
+                        fastIMEReplaceStatus = "copy_only"
                     }
                 }
             } catch {
                 polishStatus = "failed"
                 print("Polish failed: \(error)")
             }
+        }
+
+        // Terminal paste — intentionally outside the polish block so it runs
+        // regardless of whether an LLM key is configured or polish succeeded.
+        // Raw paste was suppressed earlier to prevent newlines executing as shell
+        // commands; paste the final text (raw or polished) here instead.
+        if config.fastIME && config.autoPaste && isTerminal {
+            fastIMEReplaceStatus = "copied"
+            let insertResult = textInserter.insertViaClipboard(text: finalText)
+            fastIMEReplaceStatus = insertResult.success ? "terminal_paste" : "copy_only"
         }
 
         // If not in fast IME mode, insert final text directly

@@ -49,6 +49,8 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         DispatchQueue.main.async {
             self.setupStatusItem()
             self.setupMenu()
+            // Wire the settings window to the live pipeline
+            SettingsWindowController.shared.pipeline = pipeline
         }
     }
 
@@ -65,19 +67,57 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
     }
 
     private func setupMenu() {
+        // ── Usage hint ─────────────────────────────────────────────────────────
         let hint = NSMenuItem(title: "Hold Fn or F15 to record", action: nil, keyEquivalent: "")
         hint.isEnabled = false
         menu.addItem(hint)
-        menu.addItem(NSMenuItem.separator())
 
-        let toggle = NSMenuItem(title: "Start Recording", action: #selector(toggleRecordingFromMenu), keyEquivalent: "")
+        menu.addItem(.separator())
+
+        // ── Recording control (most prominent) ─────────────────────────────────
+        let toggle = NSMenuItem(
+            title: "Start Recording",
+            action: #selector(toggleRecordingFromMenu),
+            keyEquivalent: "r"
+        )
         toggle.target = self
+        toggle.image = menuImage("mic.fill")
         menu.addItem(toggle)
         toggleItem = toggle
+        applyBoldTitle("Start Recording", to: toggle)
 
-        menu.addItem(NSMenuItem.separator())
+        menu.addItem(.separator())
 
-        // --- STT Backend toggle (for A/B testing) ---
+        // ── Last transcription telemetry ───────────────────────────────────────
+        let telemetry = NSMenuItem(title: "上次: — 未有記錄 —", action: nil, keyEquivalent: "")
+        telemetry.isEnabled = false
+        menu.addItem(telemetry)
+        telemetryItem = telemetry
+
+        menu.addItem(.separator())
+
+        // ── Settings & utilities ───────────────────────────────────────────────
+        let settings = NSMenuItem(
+            title: "Settings...",
+            action: #selector(openSettings),
+            keyEquivalent: ","
+        )
+        settings.target = self
+        settings.image = menuImage("gear")
+        menu.addItem(settings)
+
+        let openOut = NSMenuItem(
+            title: "Open Output Folder",
+            action: #selector(openOutputFolder),
+            keyEquivalent: ""
+        )
+        openOut.target = self
+        openOut.image = menuImage("folder")
+        menu.addItem(openOut)
+
+        menu.addItem(.separator())
+
+        // ── STT backend submenu (developer option) ─────────────────────────────
         let backendHeader = NSMenuItem(title: "STT: Whisper", action: nil, keyEquivalent: "")
         backendHeader.isEnabled = false
         menu.addItem(backendHeader)
@@ -85,12 +125,20 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
 
         let backendMenu = NSMenu()
 
-        let whisper = NSMenuItem(title: "Whisper (本地)", action: #selector(selectWhisper), keyEquivalent: "")
+        let whisper = NSMenuItem(
+            title: "Whisper (本地)",
+            action: #selector(selectWhisper),
+            keyEquivalent: ""
+        )
         whisper.target = self
         backendMenu.addItem(whisper)
         whisperItem = whisper
 
-        let funasr = NSMenuItem(title: "FunASR (伺服器)", action: #selector(selectFunASR), keyEquivalent: "")
+        let funasr = NSMenuItem(
+            title: "FunASR (伺服器)",
+            action: #selector(selectFunASR),
+            keyEquivalent: ""
+        )
         funasr.target = self
         backendMenu.addItem(funasr)
         funasrItem = funasr
@@ -101,32 +149,43 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
 
         updateBackendCheckmarks()
 
-        // --- Last transcription telemetry ---
-        let telemetry = NSMenuItem(title: "上次: — 未有記錄 —", action: nil, keyEquivalent: "")
-        telemetry.isEnabled = false
-        menu.addItem(telemetry)
-        telemetryItem = telemetry
+        menu.addItem(.separator())
 
-        menu.addItem(NSMenuItem.separator())
-
-        let manageVocab = NSMenuItem(title: "Manage Vocabulary...", action: #selector(openVocabularySettings), keyEquivalent: ",")
-        manageVocab.target = self
-        menu.addItem(manageVocab)
-
-        let openOut = NSMenuItem(title: "Open Output Folder", action: #selector(openOutputFolder), keyEquivalent: "")
-        openOut.target = self
-        menu.addItem(openOut)
-
-        menu.addItem(NSMenuItem.separator())
-
-        let quit = NSMenuItem(title: "Quit CantoFlow", action: #selector(quitApp), keyEquivalent: "q")
+        // ── Quit ───────────────────────────────────────────────────────────────
+        let quit = NSMenuItem(
+            title: "Quit CantoFlow",
+            action: #selector(quitApp),
+            keyEquivalent: "q"
+        )
         quit.target = self
         menu.addItem(quit)
 
-        // Version info (disabled, for display only)
-        let versionItem = NSMenuItem(title: "Version \(appShortVersion) (\(appBuildNumber))", action: nil, keyEquivalent: "")
+        // Version info (disabled, display only)
+        let versionItem = NSMenuItem(
+            title: "Version \(appShortVersion) (\(appBuildNumber))",
+            action: nil,
+            keyEquivalent: ""
+        )
         versionItem.isEnabled = false
         menu.addItem(versionItem)
+    }
+
+    // MARK: - Helpers
+
+    /// Returns a small SF Symbol image sized for menu items.
+    private func menuImage(_ symbolName: String) -> NSImage? {
+        let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
+        return NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(config)
+    }
+
+    /// Applies bold system font to a menu item's attributed title.
+    private func applyBoldTitle(_ title: String, to item: NSMenuItem) {
+        let boldFont = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
+        item.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [.font: boldFont]
+        )
     }
 
     // MARK: - Backend Toggle
@@ -155,12 +214,13 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
     private func updateTelemetryItem(_ result: PipelineResult) {
         let backend = result.sttBackend == .whisper ? "Whisper" : "FunASR"
         let chars = result.finalText.count
-        let sttSec   = String(format: "%.1f", Double(result.sttMs)   / 1000.0)
+        let sttSec    = String(format: "%.1f", Double(result.sttMs)    / 1000.0)
         let polishSec = String(format: "%.1f", Double(result.polishMs) / 1000.0)
         let totalSec  = String(format: "%.1f", Double(result.sttMs + result.polishMs) / 1000.0)
 
-        let polishLabel = result.polishMs > 0 ? " · Qwen \(polishSec)s" : ""
+        let polishLabel = result.polishMs > 0 ? " · LLM \(polishSec)s" : ""
         let title = "上次: \(chars)字 · \(backend) \(sttSec)s\(polishLabel) · 共 \(totalSec)s"
+
         DispatchQueue.main.async { [weak self] in
             self?.telemetryItem?.title = title
         }
@@ -197,11 +257,16 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
 
         switch state {
         case .idle:
-            toggleItem?.title = "Start Recording"
+            toggleItem?.image = menuImage("mic.fill")
+            if let item = toggleItem { applyBoldTitle("Start Recording", to: item) }
         case .recording:
+            toggleItem?.attributedTitle = nil
             toggleItem?.title = "Stop Recording"
+            toggleItem?.image = menuImage("stop.circle.fill")
         case .processing:
+            toggleItem?.attributedTitle = nil
             toggleItem?.title = "Processing..."
+            toggleItem?.image = nil
         }
     }
 
@@ -250,8 +315,8 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         NSWorkspace.shared.open(config.outDir)
     }
 
-    @objc private func openVocabularySettings() {
-        VocabularySettingsWindow.shared.showWindow()
+    @objc private func openSettings() {
+        SettingsWindowController.shared.show()
     }
 
     @objc private func quitApp() {
