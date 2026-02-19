@@ -68,16 +68,23 @@ struct GeneralTab: View {
     }
 }
 
-// MARK: - Vocabulary View Model
+// MARK: - Vocabulary Tab
+//
+// Uses plain @State instead of ObservableObject/@Published to avoid the
+// NSConcretePointerArray over-release crash on macOS 26 beta.  That crash
+// occurs when any @Published change fires a Combine subscriber notification
+// during a CA transaction commit (e.g. swipe-delete animation, sheet dismiss).
+// @State uses SwiftUI's internal _StateBox graph mechanism, not Combine, so
+// it is immune to that CA/Combine interaction bug.
 
-@MainActor
-final class VocabularyViewModel: ObservableObject {
-    @Published var entries: [VocabEntry] = []
-    @Published var searchText: String = ""
+struct VocabularyTab: View {
+    @State private var entries: [VocabEntry] = VocabularyStore.shared.personal.entries
+    @State private var searchText: String = ""
+    @State private var selectedID: UUID?
+    @State private var showingAddSheet = false
+    @State private var editingEntry: VocabEntry?
 
-    init() { reload() }
-
-    var filteredEntries: [VocabEntry] {
+    private var filteredEntries: [VocabEntry] {
         guard !searchText.isEmpty else { return entries }
         let q = searchText.lowercased()
         return entries.filter {
@@ -88,41 +95,30 @@ final class VocabularyViewModel: ObservableObject {
         }
     }
 
-    var isFull: Bool { entries.count >= 500 }
+    private var isFull: Bool { entries.count >= 500 }
 
-    func reload() {
+    private func reload() {
         entries = VocabularyStore.shared.personal.entries
     }
 
-    @discardableResult
-    func add(_ entry: VocabEntry) -> Bool {
-        let ok = VocabularyStore.shared.addPersonalEntry(entry)
+    private func addEntry(_ entry: VocabEntry) {
+        _ = VocabularyStore.shared.addPersonalEntry(entry)
         reload()
-        return ok
     }
 
-    func remove(id: UUID) {
+    private func removeEntry(id: UUID) {
         VocabularyStore.shared.removePersonalEntry(id: id)
         reload()
     }
 
-    func update(_ entry: VocabEntry) {
+    private func updateEntry(_ entry: VocabEntry) {
         VocabularyStore.shared.updatePersonalEntry(entry)
         reload()
     }
-}
-
-// MARK: - Vocabulary Tab
-
-struct VocabularyTab: View {
-    @StateObject private var viewModel = VocabularyViewModel()
-    @State private var selectedID: UUID?
-    @State private var showingAddSheet = false
-    @State private var editingEntry: VocabEntry?
 
     var body: some View {
         VStack(spacing: 0) {
-            List(viewModel.filteredEntries, id: \.id, selection: $selectedID) { entry in
+            List(filteredEntries, id: \.id, selection: $selectedID) { entry in
                 VocabRowView(entry: entry)
                     .contentShape(Rectangle())
                     .onTapGesture {
@@ -132,47 +128,43 @@ struct VocabularyTab: View {
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                         Button(role: .destructive) {
                             let id = entry.id
-                            let wasSelected = selectedID == id
-                            if wasSelected { selectedID = nil }
-                            // Defer @Published mutation out of the swipe-animation CA
-                            // transaction to avoid NSConcretePointerArray crash on
-                            // macOS 26 beta (same pattern as add/edit sheets).
-                            DispatchQueue.main.async { viewModel.remove(id: id) }
+                            if selectedID == id { selectedID = nil }
+                            removeEntry(id: id)
                         } label: {
                             Label("Delete", systemImage: "trash")
                         }
                     }
             }
             .listStyle(.inset(alternatesRowBackgrounds: true))
-            .searchable(text: $viewModel.searchText, placement: .toolbar, prompt: "Search terms...")
+            .searchable(text: $searchText, placement: .toolbar, prompt: "Search terms...")
             .overlay { emptyStateOverlay }
 
             Divider()
 
             VocabBottomBar(
-                isFull: viewModel.isFull,
+                isFull: isFull,
                 hasSelection: selectedID != nil,
-                count: viewModel.entries.count,
+                count: entries.count,
                 onAdd: { showingAddSheet = true },
                 onRemove: {
                     if let id = selectedID {
                         selectedID = nil
-                        DispatchQueue.main.async { viewModel.remove(id: id) }
+                        removeEntry(id: id)
                     }
                 }
             )
         }
         .sheet(isPresented: $showingAddSheet) {
-            AddEditTermSheet(entry: nil) { viewModel.add($0) }
+            AddEditTermSheet(entry: nil) { addEntry($0) }
         }
         .sheet(item: $editingEntry) { entry in
-            AddEditTermSheet(entry: entry) { viewModel.update($0) }
+            AddEditTermSheet(entry: entry) { updateEntry($0) }
         }
     }
 
     @ViewBuilder
     private var emptyStateOverlay: some View {
-        if viewModel.entries.isEmpty {
+        if entries.isEmpty {
             VStack(spacing: 12) {
                 Image(systemName: "text.book.closed")
                     .font(.system(size: 36))
@@ -186,12 +178,12 @@ struct VocabularyTab: View {
                     .frame(maxWidth: 280)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if viewModel.filteredEntries.isEmpty {
+        } else if filteredEntries.isEmpty {
             VStack(spacing: 12) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 36))
                     .foregroundStyle(.secondary)
-                Text("No Results for \"\(viewModel.searchText)\"")
+                Text("No Results for \"\(searchText)\"")
                     .font(.title3.bold())
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
