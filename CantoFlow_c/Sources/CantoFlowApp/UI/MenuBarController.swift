@@ -166,9 +166,9 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         quit.target = self
         menu.addItem(quit)
 
-        // Version info (disabled, display only)
+        // Version info (disabled, display only) — dynamic: binary mtime yyyyMMdd.HHmm
         let versionItem = NSMenuItem(
-            title: "Version \(appShortVersion) (\(appBuildNumber))",
+            title: "Version \(appBuildVersion)",
             action: nil,
             keyEquivalent: ""
         )

@@ -75,7 +75,6 @@ final class AudioCapture {
         }
 
         let inputNode = audioEngine.inputNode
-        let inputFormat = inputNode.outputFormat(forBus: 0)
 
         // Create target format: 16kHz mono PCM
         guard let targetFormat = AVAudioFormat(
@@ -103,13 +102,15 @@ final class AudioCapture {
             throw AudioCaptureError.fileCreationFailed
         }
 
-        // Create converter for sample rate conversion
-        guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
-            throw AudioCaptureError.engineNotReady
-        }
-
-        // Install tap on input node
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
+        // Pass nil as the tap format so AVAudio uses the hardware's current native format.
+        // Reading outputFormat(forBus:0) before installTap and using it as the format
+        // races with CoreAudio server restarts: if the hardware format changes between
+        // the read and the installTap call, AVAudio throws an uncaught Objective-C
+        // exception ("Failed to create tap due to format mismatch") that crashes the
+        // process. nil always matches the current hardware format and avoids this.
+        // The converter is created lazily on the first callback using buffer.format.
+        var converter: AVAudioConverter? = nil
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self] buffer, _ in
             guard let self = self, let audioFile = self.audioFile else { return }
 
             // Calculate audio level for waveform visualization
@@ -131,9 +132,15 @@ final class AudioCapture {
                 }
             }
 
+            // Lazily create converter on first callback using the actual hardware format.
+            if converter == nil {
+                converter = AVAudioConverter(from: buffer.format, to: targetFormat)
+            }
+            guard let conv = converter else { return }
+
             // Convert buffer to target format
             let frameCount = AVAudioFrameCount(
-                Double(buffer.frameLength) * Self.targetSampleRate / inputFormat.sampleRate
+                Double(buffer.frameLength) * Self.targetSampleRate / buffer.format.sampleRate
             )
 
             guard let convertedBuffer = AVAudioPCMBuffer(
@@ -142,7 +149,7 @@ final class AudioCapture {
             ) else { return }
 
             var error: NSError?
-            let status = converter.convert(to: convertedBuffer, error: &error) { inNumPackets, outStatus in
+            let status = conv.convert(to: convertedBuffer, error: &error) { inNumPackets, outStatus in
                 outStatus.pointee = .haveData
                 return buffer
             }

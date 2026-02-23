@@ -10,7 +10,7 @@
 - macOS Menu Bar app，廣東話語音轉繁體中文 (STT)
 - 使用 **Swift Package Manager**（`swift build`），**非 Xcode project**
 - Binary: `.build/debug/cantoflow`
-- 當前版本：`0.2.3`（見 `AppVersion.swift` + `Resources/Info.plist`）
+- 版本號：動態從 binary mtime 生成（格式 `yyyyMMdd.HHmm`），每次 `swift build` 自動更新
 
 ---
 
@@ -145,13 +145,10 @@ net.kovidgoyal.kitty, com.microsoft.VSCode, io.alacritty, co.zeit.hyper
 
 ---
 
-## 升版本 Checklist
+## 版本號（自動）
 
-升版本號**必須同時修改兩個地方**：
-1. `Sources/CantoFlowApp/AppVersion.swift` — `appShortVersion`
-2. `Resources/Info.plist` — `CFBundleShortVersionString`
-
-原因：SPM plain-executable build 中 `Bundle.main.infoDictionary` 讀不到 `Info.plist`（沒有 .app bundle），所以 MenuBar 從 `AppVersion.swift` 常量讀取版本。
+`AppVersion.swift` 的 `appBuildVersion` 在 runtime 讀取 binary 的 mtime，格式 `yyyyMMdd.HHmm`。
+每次 `swift build` 產生新 binary，版本號自動更新，**不需要手動改任何文件**。
 
 ---
 

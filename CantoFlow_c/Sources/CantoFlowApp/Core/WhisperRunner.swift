@@ -85,6 +85,8 @@ final class WhisperRunner {
             // The binary has Metal/GPU support if --no-gpu or --device flags appear in help
             let supported = helpText.contains("--no-gpu") || helpText.contains("--device")
             _metalSupported = supported
+            // Log once at detection time — not on every transcribe() call.
+            print("[WhisperRunner] Metal GPU \(supported ? "available" : "not available") in whisper-cli build")
             return supported
         } catch {
             _metalSupported = false
@@ -128,14 +130,6 @@ final class WhisperRunner {
         // Detect Metal GPU support once (cached after first call)
         let metalSupported = WhisperRunner.detectMetalSupport(whisperPath: whisperPath)
         let metalEnabled = metalSupported && config.useMetalGPU
-
-        if metalSupported && !config.useMetalGPU {
-            print("[WhisperRunner] Metal GPU available but disabled via --no-metal")
-        } else if !metalSupported {
-            print("[WhisperRunner] Metal GPU not available in this whisper-cli build")
-        } else {
-            print("[WhisperRunner] Metal GPU enabled (device 0)")
-        }
 
         // Run whisper-cli with model fallback
         var runResult = try await runWhisper(

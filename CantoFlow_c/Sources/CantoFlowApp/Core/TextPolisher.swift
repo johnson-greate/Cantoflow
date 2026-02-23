@@ -31,6 +31,56 @@ struct PolishResult {
     let durationMs: Int
 }
 
+/// Polish output style
+enum PolishStyle: String, CaseIterable {
+    case cantonese = "cantonese"
+    case formal    = "formal"
+
+    var displayName: String {
+        switch self {
+        case .cantonese: return "廣東話口語"
+        case .formal:    return "正式書面語"
+        }
+    }
+
+    var styleDescription: String {
+        switch self {
+        case .cantonese: return "保留香港粵語用詞，語氣親切自然。"
+        case .formal:    return "中國大陸標準書面語，用詞嚴謹規範。"
+        }
+    }
+
+    var systemPrompt: String {
+        switch self {
+        case .cantonese:
+            return """
+            你是一位精通香港廣東話的資深編輯。請將用戶輸入的語音識別粗文字潤飾為地道、自然的香港口語。
+            1. 保持用戶原意，不要過度改寫
+            2. 修正語音識別錯字（按上下文）
+            3. 去除口頭禪（即係、其實、呀、嗯、嗱咁等）
+            4. 使用地道香港粵語用詞（係、唔、喺、咗、囉、架、喎等），語氣要親切自然
+            5. 整理句式及標點
+            6. 只輸出整理後文字，不要解釋
+            7. 對地名、人名、品牌名等專有名詞採取保守策略：除非非常確定，否則保留原文
+            8. 尤其避免把香港地名錯改為其他地區地名（例如銅鑼灣、維園、旺角、尖沙咀、中環等）
+            9. 必須以繁體中文輸出，將所有簡體字轉換為繁體字
+            """
+        case .formal:
+            return """
+            你是一位精通中國大陸標準書面語的資深編輯。請將用戶輸入的語音識別粗文字潤飾為嚴謹、規範的正式書面語。
+            1. 保持用戶原意，不要過度改寫
+            2. 修正語音識別錯字（按上下文）
+            3. 去除語氣詞、口頭禪及方言用詞，改為標準書面語表達
+            4. 用詞準確、專業，符合中國大陸公文或正式出版物規範，避免口語化和方言用詞
+            5. 整理句式及標點
+            6. 只輸出整理後文字，不要解釋
+            7. 對地名、人名、品牌名等專有名詞採取保守策略：除非非常確定，否則保留原文
+            8. 必須以繁體中文輸出，將所有簡體字轉換為繁體字
+            """
+        }
+    }
+}
+
 /// LLM-based text polisher supporting Qwen, Anthropic, and OpenAI
 final class TextPolisher {
     private let config: AppConfig
@@ -38,27 +88,17 @@ final class TextPolisher {
     /// Whether to use vocabulary injection in the system prompt
     var useVocabularyInjection = true
 
-    /// Base system prompt for polishing Cantonese text
-    static let baseSystemPrompt = """
-    你是一個廣東話語音輸入助手。你會收到一段由語音識別系統轉錄的廣東話粗文字，你的任務是：
-    1. 保持用戶原意，不要過度改寫
-    2. 修正語音識別錯字（按上下文）
-    3. 去除口頭禪（即係、其實、呀、嗯、嗱咁等）
-    4. 將廣東話口語轉成自然書面語（保留香港用語）
-    5. 整理句式及標點
-    6. 只輸出整理後文字，不要解釋
-    7. 對地名、人名、品牌名等專有名詞採取保守策略：除非非常確定，否則保留原文，不要自行替換成其他地名
-    8. 尤其避免把香港地名錯改為其他地區地名（例如銅鑼灣、維園、旺角、尖沙咀、中環等）
-    9. 必須以繁體中文輸出，將所有簡體字轉換為繁體字
-    """
-
     init(config: AppConfig) {
         self.config = config
     }
 
-    /// Generate system prompt with vocabulary injection
+    /// Generate system prompt with the current polish style and vocabulary injection.
+    /// Reads polishStyle from UserDefaults at call time so UI changes take effect
+    /// on the next transcription without recreating the pipeline.
     private func generateSystemPrompt() -> String {
-        var prompt = Self.baseSystemPrompt
+        let raw = UserDefaults.standard.string(forKey: "polishStyle") ?? PolishStyle.cantonese.rawValue
+        let style = PolishStyle(rawValue: raw) ?? .cantonese
+        var prompt = style.systemPrompt
 
         if useVocabularyInjection {
             let vocabSection = VocabularyStore.shared.generateClaudePromptSection()

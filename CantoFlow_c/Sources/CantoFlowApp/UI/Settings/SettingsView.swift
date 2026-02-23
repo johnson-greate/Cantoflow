@@ -37,6 +37,11 @@ struct SettingsView: View {
 struct GeneralTab: View {
     @AppStorage("launchAtLogin") private var launchAtLogin = false
     @AppStorage("soundFeedback") private var soundFeedback = true
+    @AppStorage("polishStyle") private var polishStyleRaw: String = PolishStyle.cantonese.rawValue
+
+    private var polishStyle: PolishStyle {
+        PolishStyle(rawValue: polishStyleRaw) ?? .cantonese
+    }
 
     var body: some View {
         Form {
@@ -57,8 +62,21 @@ struct GeneralTab: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Text Polish") {
+                Picker("潤飾風格", selection: $polishStyleRaw) {
+                    ForEach(PolishStyle.allCases, id: \.rawValue) { style in
+                        Text(style.displayName).tag(style.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                Text(polishStyle.styleDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("About") {
-                LabeledContent("Version", value: "\(appShortVersion) (\(appBuildNumber))")
+                LabeledContent("Version", value: appBuildVersion)
                 LabeledContent("Build Mode", value: "CLI / SPM")
             }
         }
@@ -82,6 +100,13 @@ struct VocabularyTab: View {
     @State private var selectedID: UUID?
     @State private var showingAddSheet = false
     @State private var editingEntry: VocabEntry?
+    // Staging: holds the entry returned by AddEditTermSheet until the sheet's
+    // dismiss animation completes.  The actual VocabularyStore write + list
+    // reload happens in onDismiss, which fires after the animation finishes and
+    // outside any CoreAnimation transaction — avoiding the
+    // _Block_release + IMKCFRunLoopWakeUpReliable crash on macOS 26 beta.
+    @State private var stagedAdd: VocabEntry? = nil
+    @State private var stagedEdit: VocabEntry? = nil
 
     private var filteredEntries: [VocabEntry] {
         guard !searchText.isEmpty else { return entries }
@@ -128,7 +153,13 @@ struct VocabularyTab: View {
                         Button(role: .destructive) {
                             let id = entry.id
                             if selectedID == id { selectedID = nil }
-                            removeEntry(id: id)
+                            // Defer past the swipe-reveal CA animation to avoid
+                            // NSConcretePointerArray dealloc-in-CA-transaction crash
+                            // on macOS 26 beta.
+                            Task { @MainActor in
+                                try? await Task.sleep(for: .milliseconds(50))
+                                removeEntry(id: id)
+                            }
                         } label: {
                             Label("Delete", systemImage: "trash")
                         }
@@ -148,16 +179,31 @@ struct VocabularyTab: View {
                 onRemove: {
                     if let id = selectedID {
                         selectedID = nil
-                        removeEntry(id: id)
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(50))
+                            removeEntry(id: id)
+                        }
                     }
                 }
             )
         }
-        .sheet(isPresented: $showingAddSheet) {
-            AddEditTermSheet(entry: nil) { addEntry($0) }
+        // onDismiss fires after the dismiss animation completes — guaranteed to
+        // be outside any CA transaction, so state mutations are safe here.
+        .sheet(isPresented: $showingAddSheet, onDismiss: {
+            if let entry = stagedAdd {
+                addEntry(entry)
+                stagedAdd = nil
+            }
+        }) {
+            AddEditTermSheet(entry: nil) { stagedAdd = $0 }
         }
-        .sheet(item: $editingEntry) { entry in
-            AddEditTermSheet(entry: entry) { updateEntry($0) }
+        .sheet(item: $editingEntry, onDismiss: {
+            if let entry = stagedEdit {
+                updateEntry(entry)
+                stagedEdit = nil
+            }
+        }) { entry in
+            AddEditTermSheet(entry: entry) { stagedEdit = $0 }
         }
     }
 
@@ -320,7 +366,6 @@ struct AddEditTermSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(isEditing ? "Save" : "Add") {
-                        // Capture the entry value before any state changes.
                         let entry = VocabEntry(
                             id: existingEntry?.id ?? UUID(),
                             term: term.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -328,14 +373,12 @@ struct AddEditTermSheet: View {
                             category: category,
                             notes: notes.isEmpty ? nil : notes
                         )
-                        // Dismiss the sheet first, then update the parent list in the
-                        // next run-loop cycle.  Calling onSave() and dismiss() in the
-                        // same synchronous block causes SwiftUI to process a list
-                        // re-render and a sheet dismissal in the same CoreAnimation
-                        // transaction, which crashes on macOS 26 beta (over-release of
-                        // a Combine subscriber block during CA commit).
+                        // onSave merely stages the entry in the parent (@State var
+                        // stagedAdd/stagedEdit) — no list re-render, no CA conflict.
+                        // The actual VocabularyStore write + reload happens in the
+                        // parent's onDismiss handler, after the animation completes.
+                        onSave(entry)
                         dismiss()
-                        DispatchQueue.main.async { onSave(entry) }
                     }
                     .disabled(!canSave)
                 }
