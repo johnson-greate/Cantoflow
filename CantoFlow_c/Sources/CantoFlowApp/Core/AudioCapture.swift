@@ -109,6 +109,8 @@ final class AudioCapture {
         // exception ("Failed to create tap due to format mismatch") that crashes the
         // process. nil always matches the current hardware format and avoids this.
         // The converter is created lazily on the first callback using buffer.format.
+        // bufferSize = 4096 frames at the hardware sample rate (typically 48 kHz ≈ 85 ms).
+        // Large enough to avoid drop-outs under load; small enough for responsive waveform updates.
         var converter: AVAudioConverter? = nil
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self] buffer, _ in
             guard let self = self, let audioFile = self.audioFile else { return }

@@ -391,31 +391,12 @@ struct AddEditTermSheet: View {
 // MARK: - Models Tab
 
 struct ModelsTab: View {
-    // @AppStorage binds directly to UserDefaults — no ObservableObject/Combine
-    // subscriber involved, so no NSConcretePointerArray crash risk.
-    @AppStorage("sttBackend") private var sttBackend: String = "whisper"
     @AppStorage("qwenAPIKey") private var qwenAPIKey: String = ""
     @AppStorage("openaiAPIKey") private var openaiAPIKey: String = ""
     @AppStorage("anthropicAPIKey") private var anthropicAPIKey: String = ""
 
     var body: some View {
         Form {
-            Section {
-                Picker("STT Backend", selection: $sttBackend) {
-                    Text("Whisper (Local)").tag("whisper")
-                    Text("FunASR (Server)").tag("funasr")
-                }
-                .onChange(of: sttBackend) { newValue in
-                    SettingsWindowController.shared.onSttBackendChange?(newValue)
-                }
-
-                Text("Whisper runs fully offline. FunASR requires the companion Python server on localhost:10095.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } header: {
-                Text("Speech Recognition")
-            }
-
             Section {
                 SecureField("Qwen API Key (QWEN_API_KEY)", text: $qwenAPIKey)
                 SecureField("OpenAI API Key (OPENAI_API_KEY)", text: $openaiAPIKey)

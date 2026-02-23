@@ -16,11 +16,6 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
     private let menu = NSMenu()
     private var toggleItem: NSMenuItem?
 
-    // Backend toggle items
-    private var backendHeaderItem: NSMenuItem?
-    private var whisperItem: NSMenuItem?
-    private var funasrItem: NSMenuItem?
-
     // Last transcription telemetry display
     private var telemetryItem: NSMenuItem?
 
@@ -123,40 +118,6 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
 
         menu.addItem(.separator())
 
-        // ── STT backend submenu (developer option) ─────────────────────────────
-        let backendHeader = NSMenuItem(title: "STT: Whisper", action: nil, keyEquivalent: "")
-        backendHeader.isEnabled = false
-        menu.addItem(backendHeader)
-        backendHeaderItem = backendHeader
-
-        let backendMenu = NSMenu()
-
-        let whisper = NSMenuItem(
-            title: "Whisper (本地)",
-            action: #selector(selectWhisper),
-            keyEquivalent: ""
-        )
-        whisper.target = self
-        backendMenu.addItem(whisper)
-        whisperItem = whisper
-
-        let funasr = NSMenuItem(
-            title: "FunASR (伺服器)",
-            action: #selector(selectFunASR),
-            keyEquivalent: ""
-        )
-        funasr.target = self
-        backendMenu.addItem(funasr)
-        funasrItem = funasr
-
-        let backendSwitch = NSMenuItem(title: "切換 Backend", action: nil, keyEquivalent: "")
-        backendSwitch.submenu = backendMenu
-        menu.addItem(backendSwitch)
-
-        updateBackendCheckmarks()
-
-        menu.addItem(.separator())
-
         // ── Quit ───────────────────────────────────────────────────────────────
         let quit = NSMenuItem(
             title: "Quit CantoFlow",
@@ -194,38 +155,16 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         )
     }
 
-    // MARK: - Backend Toggle
-
-    private func updateBackendCheckmarks() {
-        let isWhisper = pipeline.sttBackend == .whisper
-        backendHeaderItem?.title = "STT: \(isWhisper ? "Whisper" : "FunASR")"
-        whisperItem?.state = isWhisper ? .on : .off
-        funasrItem?.state = isWhisper ? .off : .on
-    }
-
-    @objc private func selectWhisper() {
-        pipeline.sttBackend = .whisper
-        updateBackendCheckmarks()
-        NotificationManager.shared.notify("已切換到 Whisper (本地)")
-    }
-
-    @objc private func selectFunASR() {
-        pipeline.sttBackend = .funasr
-        updateBackendCheckmarks()
-        NotificationManager.shared.notify("已切換到 FunASR (伺服器)")
-    }
-
     // MARK: - Telemetry Display
 
     private func updateTelemetryItem(_ result: PipelineResult) {
-        let backend = result.sttBackend == .whisper ? "Whisper" : "FunASR"
         let chars = result.finalText.count
         let sttSec    = String(format: "%.1f", Double(result.sttMs)    / 1000.0)
         let polishSec = String(format: "%.1f", Double(result.polishMs) / 1000.0)
         let totalSec  = String(format: "%.1f", Double(result.sttMs + result.polishMs) / 1000.0)
 
         let polishLabel = result.polishMs > 0 ? " · LLM \(polishSec)s" : ""
-        let title = "上次: \(chars)字 · \(backend) \(sttSec)s\(polishLabel) · 共 \(totalSec)s"
+        let title = "上次: \(chars)字 · STT \(sttSec)s\(polishLabel) · 共 \(totalSec)s"
 
         // Called from inside MainActor.run {} — already on main thread.
         // Direct assignment avoids an extra GCD block lifecycle.

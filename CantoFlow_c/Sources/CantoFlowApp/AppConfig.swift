@@ -4,7 +4,6 @@ import Foundation
 struct AppConfig {
     var projectRoot: URL
     var sttProfile: STTProfile = .fast
-    var sttBackend: STTBackend = .whisper
     var audioDevice: String = "MacBook Air Microphone"
     var fastIME: Bool = true
     var autoPaste: Bool = true
@@ -12,10 +11,6 @@ struct AppConfig {
     var polishProvider: PolishProvider = .auto
     var whisperPath: String? = nil
     var modelPath: String? = nil
-
-    // FunASR server configuration
-    var funasrHost: String = "127.0.0.1"
-    var funasrPort: Int = 8765
 
     // Phase 2: Push-to-Talk configuration
     var triggerKey: String = "auto"  // "auto", "fn", "f12", "f13", "f14", "f15"
@@ -29,11 +24,6 @@ struct AppConfig {
         case fast
         case balanced
         case accurate
-    }
-
-    enum STTBackend: String, CaseIterable {
-        case whisper   // Local whisper.cpp
-        case funasr    // FunASR HTTP server
     }
 
     enum PolishProvider: String, CaseIterable {
@@ -115,7 +105,6 @@ struct AppConfig {
         let commonPaths = [
             home.appendingPathComponent("Documents/CantoFlow"),
             home.appendingPathComponent("CantoFlow"),
-            URL(fileURLWithPath: "/Users/johnson_tam/Documents/CantoFlow")
         ]
 
         for path in commonPaths {
@@ -167,21 +156,6 @@ struct AppConfig {
                     config.polishProvider = provider
                     i += 1
                 }
-            case "--stt-backend":
-                if i + 1 < args.count, let backend = STTBackend(rawValue: args[i + 1]) {
-                    config.sttBackend = backend
-                    i += 1
-                }
-            case "--funasr-host":
-                if i + 1 < args.count {
-                    config.funasrHost = args[i + 1]
-                    i += 1
-                }
-            case "--funasr-port":
-                if i + 1 < args.count, let port = Int(args[i + 1]) {
-                    config.funasrPort = port
-                    i += 1
-                }
             case "--fast-ime":
                 config.fastIME = true
                 config.autoPaste = true
@@ -229,13 +203,10 @@ struct AppConfig {
         Options:
           --project-root PATH     Project root directory (default: current directory)
           --stt-profile PROFILE   STT profile: fast, balanced, accurate (default: fast)
-          --stt-backend BACKEND   STT backend: whisper, funasr (default: whisper)
           --audio-device NAME     Audio input device name (default: MacBook Air Microphone)
           --whisper PATH          Path to whisper-cli binary
           --model PATH            Path to whisper model file
           --polish-provider NAME  LLM provider: auto, openai, anthropic, qwen, none (default: auto)
-          --funasr-host HOST      FunASR server host (default: 127.0.0.1)
-          --funasr-port PORT      FunASR server port (default: 8765)
           --fast-ime              Enable fast IME mode (paste raw, then replace with polished)
           --no-fast-ime           Disable fast IME mode
           --auto-paste            Auto-paste transcribed text
@@ -252,10 +223,6 @@ struct AppConfig {
           OPENAI_API_KEY          OpenAI API key for text polishing
           ANTHROPIC_API_KEY       Anthropic API key for text polishing
           QWEN_API_KEY            Qwen/DashScope API key for text polishing
-
-        STT Backends:
-          whisper                 Local whisper.cpp (default, ~4-5s latency)
-          funasr                  FunASR HTTP server (requires separate server, ~300ms streaming)
 
         Push-to-Talk:
           Hold Fn (MacBook) or F15 (external keyboard) to record.

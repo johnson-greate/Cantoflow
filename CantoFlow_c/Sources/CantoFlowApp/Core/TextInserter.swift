@@ -1,6 +1,16 @@
 import AppKit
 import ApplicationServices
 
+// Virtual key codes from macOS HIToolbox/Events.h
+private let kVK_ANSI_V: CGKeyCode = 0x09  // V key → Cmd+V (paste)
+private let kVK_ANSI_Z: CGKeyCode = 0x06  // Z key → Cmd+Z (undo)
+
+// Timing constants for clipboard operations
+/// Delay before sending Cmd+V to let the pasteboard settle
+private let kClipboardSettleNs: UInt64 = 50_000_000      // 50 ms
+/// Delay before restoring clipboard — some apps take 500 ms+ to complete a paste
+private let kClipboardRestoreNs: UInt64 = 2_000_000_000  // 2 s
+
 // Known terminal emulator bundle IDs where Cmd+Z does not undo text input
 private let terminalBundleIDs: Set<String> = [
     "com.apple.Terminal",
@@ -59,14 +69,14 @@ final class TextInserter {
         pasteboard.setString(text, forType: .string)
 
         // Yield main thread briefly to let the pasteboard settle before sending Cmd+V.
-        try? await Task.sleep(nanoseconds: 50_000_000) // 50 ms
+        try? await Task.sleep(nanoseconds: kClipboardSettleNs)
 
         let success = sendCmdV()
 
         // Restore clipboard after a delay long enough for the paste to complete.
         // CGEvent posting is asynchronous; some apps take 500 ms+.
         Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 s
+            try? await Task.sleep(nanoseconds: kClipboardRestoreNs)
             self?.clipboardGuard.restore()
         }
 
@@ -139,8 +149,8 @@ final class TextInserter {
 
     private func sendCmdV() -> Bool {
         let source = CGEventSource(stateID: .hidSystemState)
-        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true),
-              let keyUp   = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false) else {
+        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: kVK_ANSI_V, keyDown: true),
+              let keyUp   = CGEvent(keyboardEventSource: source, virtualKey: kVK_ANSI_V, keyDown: false) else {
             return false
         }
         keyDown.flags = .maskCommand
@@ -152,8 +162,8 @@ final class TextInserter {
 
     private func sendCmdZ() -> Bool {
         let source = CGEventSource(stateID: .hidSystemState)
-        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x06, keyDown: true),
-              let keyUp   = CGEvent(keyboardEventSource: source, virtualKey: 0x06, keyDown: false) else {
+        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: kVK_ANSI_Z, keyDown: true),
+              let keyUp   = CGEvent(keyboardEventSource: source, virtualKey: kVK_ANSI_Z, keyDown: false) else {
             return false
         }
         keyDown.flags = .maskCommand

@@ -14,23 +14,8 @@ import SwiftUI
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     static let shared = SettingsWindowController()
 
-    /// Callback wired by MenuBarController so ModelsTab's picker can switch
-    /// backends at runtime.  ModelsTab calls this via .onChange(of: sttBackend).
-    var onSttBackendChange: ((String) -> Void)?
-
-    /// Set by MenuBarController so the Models tab can switch backends at runtime.
-    weak var pipeline: STTPipeline? {
-        didSet {
-            // Sync pipeline state → UserDefaults so @AppStorage("sttBackend") in
-            // ModelsTab immediately reflects the live backend.
-            let key = pipeline?.sttBackend == .funasr ? "funasr" : "whisper"
-            UserDefaults.standard.set(key, forKey: "sttBackend")
-
-            onSttBackendChange = { [weak self] newBackend in
-                self?.pipeline?.sttBackend = newBackend == "funasr" ? .funasr : .whisper
-            }
-        }
-    }
+    /// Set by MenuBarController so the Settings window has access to the pipeline if needed.
+    weak var pipeline: STTPipeline?
 
     // Persistent window that is NEVER deallocated.
     //
@@ -70,12 +55,6 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private override init() {}
 
     func show() {
-        // Sync backend state before opening (it may have been changed from the menu).
-        if let pl = pipeline {
-            let key = pl.sttBackend == .funasr ? "funasr" : "whisper"
-            UserDefaults.standard.set(key, forKey: "sttBackend")
-        }
-
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }

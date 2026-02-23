@@ -35,34 +35,26 @@ struct PipelineResult {
     let polishStatus: String
     let fastIMERawStatus: String
     let fastIMEReplaceStatus: String
-    let sttBackend: AppConfig.STTBackend
 }
 
 /// Minimum recording duration in milliseconds
 private let minRecordingMs = 1500
 
-/// Unified STT result (compatible with both Whisper and FunASR)
+/// Unified STT result wrapping WhisperResult for the pipeline
 struct STTResult {
     let text: String
     let rawOutputPath: URL
     let modelUsed: String
     let durationMs: Int
-    /// Sub-timing for whisper runs; nil for FunASR
     let sttBreakdown: TelemetryEntry.LatencyMs.SttBreakdown?
 }
 
-/// STT pipeline integrating audio capture, whisper/funasr, polishing, and text insertion
+/// STT pipeline integrating audio capture, whisper, polishing, and text insertion
 final class STTPipeline {
     private var config: AppConfig
 
-    /// Runtime backend switching for A/B testing
-    var sttBackend: AppConfig.STTBackend {
-        get { config.sttBackend }
-        set { config.sttBackend = newValue }
-    }
     private let audioCapture = AudioCapture()
     private let whisperRunner: WhisperRunner
-    private let funasrRunner: FunASRRunner
     private let textPolisher: TextPolisher
     private let textInserter = TextInserter()
     private let telemetryLogger: TelemetryLogger
@@ -80,38 +72,25 @@ final class STTPipeline {
     init(config: AppConfig) {
         self.config = config
         self.whisperRunner = WhisperRunner(config: config)
-        self.funasrRunner = FunASRRunner(config: config)
         self.textPolisher = TextPolisher(config: config)
         self.telemetryLogger = TelemetryLogger(fileURL: config.telemetryFile)
     }
 
-    /// Run STT using configured backend (whisper or funasr)
+    /// Run STT via whisper-cli
     private func runSTT(audioURL: URL, outputPrefix: URL) async throws -> STTResult {
-        switch config.sttBackend {
-        case .whisper:
-            let result = try await whisperRunner.transcribe(audioURL: audioURL, outputPrefix: outputPrefix)
-            return STTResult(
-                text: result.text,
-                rawOutputPath: result.rawOutputPath,
-                modelUsed: result.modelUsed.lastPathComponent,
-                durationMs: result.durationMs,
-                sttBreakdown: TelemetryEntry.LatencyMs.SttBreakdown(
-                    launchMs: result.breakdown.launchMs,
-                    inferenceMs: result.breakdown.inferenceMs,
-                    outputReadMs: result.breakdown.outputReadMs,
-                    metalEnabled: result.breakdown.metalEnabled
-                )
+        let result = try await whisperRunner.transcribe(audioURL: audioURL, outputPrefix: outputPrefix)
+        return STTResult(
+            text: result.text,
+            rawOutputPath: result.rawOutputPath,
+            modelUsed: result.modelUsed.lastPathComponent,
+            durationMs: result.durationMs,
+            sttBreakdown: TelemetryEntry.LatencyMs.SttBreakdown(
+                launchMs: result.breakdown.launchMs,
+                inferenceMs: result.breakdown.inferenceMs,
+                outputReadMs: result.breakdown.outputReadMs,
+                metalEnabled: result.breakdown.metalEnabled
             )
-        case .funasr:
-            let result = try await funasrRunner.transcribe(audioURL: audioURL, outputPrefix: outputPrefix)
-            return STTResult(
-                text: result.text,
-                rawOutputPath: result.rawOutputPath,
-                modelUsed: result.modelUsed,
-                durationMs: result.durationMs,
-                sttBreakdown: nil
-            )
-        }
+        )
     }
 
     /// Request microphone permission
@@ -137,9 +116,6 @@ final class STTPipeline {
             throw PipelineError.notRecording
         }
 
-        // Capture backend at the moment recording stops (for telemetry accuracy)
-        let backendUsed = config.sttBackend
-
         // Stop recording — measure both recording duration and flush time
         let stoppedAt = Date()
         let recordingMs = Int(stoppedAt.timeIntervalSince(startTime) * 1000)
@@ -163,7 +139,7 @@ final class STTPipeline {
             throw PipelineError.recordingTooShort(recordingMs)
         }
 
-        // Run STT (whisper or funasr based on config)
+        // Run STT
         let stamp = TelemetryLogger.fileTimestamp()
         let outputPrefix = config.outDir.appendingPathComponent("raw_\(stamp)")
 
@@ -257,7 +233,6 @@ final class STTPipeline {
         let entry = TelemetryEntry(
             timestamp: TelemetryLogger.isoTimestamp(),
             sttProfile: config.sttProfile.rawValue,
-            sttBackend: config.sttBackend.rawValue,
             modelPath: sttResult.modelUsed,
             audioDevice: config.audioDevice,
             provider: provider,
@@ -307,8 +282,7 @@ final class STTPipeline {
             provider: provider,
             polishStatus: polishStatus,
             fastIMERawStatus: fastIMERawStatus,
-            fastIMEReplaceStatus: fastIMEReplaceStatus,
-            sttBackend: backendUsed
+            fastIMEReplaceStatus: fastIMEReplaceStatus
         )
     }
 

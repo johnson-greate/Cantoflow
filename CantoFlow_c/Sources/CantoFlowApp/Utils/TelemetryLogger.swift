@@ -4,7 +4,6 @@ import Foundation
 struct TelemetryEntry: Encodable {
     let timestamp: String
     let sttProfile: String
-    let sttBackend: String
     let modelPath: String
     let audioDevice: String
     let provider: String
