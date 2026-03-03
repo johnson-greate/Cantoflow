@@ -30,3 +30,6 @@ CantoFlow_c/.build/
 
 # Screenshots
 screenshot/
+
+# Environment Variables
+.env
