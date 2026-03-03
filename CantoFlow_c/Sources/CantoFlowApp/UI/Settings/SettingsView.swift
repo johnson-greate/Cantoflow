@@ -54,6 +54,15 @@ struct GeneralTab: View {
                     .foregroundStyle(.secondary)
             }
 
+
+            Section("Shortcut Key") {
+                HotkeyRecorderView()
+                
+                Text("Click the box above, then type any key or key combination to record it (e.g. F12, Option+Space, or Fn).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Feedback") {
                 Toggle("Sound Feedback", isOn: $soundFeedback)
 
@@ -411,5 +420,208 @@ struct ModelsTab: View {
         }
         .formStyle(.grouped)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
+
+// MARK: - Hotkey Recorder View
+
+class HotkeyRecorderTracker: ObservableObject {
+    private var eventTap: CFMachPort?
+    private var runLoopSource: CFRunLoopSource?
+    
+    private var pendingKeyCode: UInt16?
+    private var pendingFlags: UInt64?
+    
+    var onHotkeyRecorded: ((UInt16, UInt64, Bool) -> Void)?
+
+    func start() {
+        stop()
+        pendingKeyCode = nil
+        pendingFlags = nil
+        
+        let mask: CGEventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
+        let refcon = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
+        
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: mask,
+            callback: { proxy, type, event, refcon in
+                guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
+                let tracker = Unmanaged<HotkeyRecorderTracker>.fromOpaque(refcon).takeUnretainedValue()
+                
+                let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+                let flags = event.flags.rawValue
+                
+                if type == .keyDown {
+                    DispatchQueue.main.async {
+                        tracker.onHotkeyRecorded?(keyCode, flags, false)
+                    }
+                    return nil // consume the event so it doesn't type into the background
+                } else if type == .flagsChanged {
+                    let flagsMask = CustomHotkey.normalizedModifiers(flags)
+                    
+                    // If the key specifically hit is a modifier (like Fn/179)
+                    let mods: Set<UInt16> = [54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 179]
+                    if mods.contains(keyCode) {
+                        if flagsMask == 0 {
+                            // All modifiers released - save what we had
+                            if let code = tracker.pendingKeyCode, let savedFlags = tracker.pendingFlags {
+                                DispatchQueue.main.async {
+                                    tracker.onHotkeyRecorded?(code, savedFlags, true)
+                                }
+                                tracker.pendingKeyCode = nil
+                                tracker.pendingFlags = nil
+                            }
+                        } else {
+                            // Modifier pressed down
+                            tracker.pendingKeyCode = keyCode
+                            tracker.pendingFlags = flags
+                        }
+                    }
+                    return nil // consume the event
+                }
+                
+                return Unmanaged.passUnretained(event)
+            },
+            userInfo: refcon
+        ) else { return }
+        
+        eventTap = tap
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else { return }
+        runLoopSource = source
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+    }
+    
+    func stop() {
+        if let tap = eventTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            eventTap = nil
+        }
+        if let source = runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+            runLoopSource = nil
+        }
+    }
+}
+
+struct HotkeyRecorderView: View {
+    @AppStorage("customHotkey") private var customHotkeyString: String = ""
+    @State private var isRecording = false
+    @StateObject private var tracker = HotkeyRecorderTracker()
+
+    var currentHotkey: CustomHotkey {
+        if let data = Data(base64Encoded: customHotkeyString),
+           let decoded = try? JSONDecoder().decode(CustomHotkey.self, from: data) {
+            return decoded
+        } else if let data = customHotkeyString.data(using: .utf8),
+                  let decoded = try? JSONDecoder().decode(CustomHotkey.self, from: data) {
+            return decoded
+        }
+        return .defaultFn
+    }
+
+    var body: some View {
+        Button(action: {
+            if isRecording {
+                stopRecording()
+            } else {
+                startRecording()
+            }
+        }) {
+            HStack {
+                Text(isRecording ? "Listening for key press..." : currentHotkey.displayName)
+                    .foregroundStyle(isRecording ? Color.accentColor : Color.primary)
+                Spacer()
+                if !isRecording {
+                    Text("Click to record").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .contentShape(Rectangle()) // Make empty space clickable
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(6)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(isRecording ? Color.accentColor : Color.gray.opacity(0.2), lineWidth: 1)
+        )
+        .onAppear {
+            tracker.onHotkeyRecorded = { keyCode, flags, isModifier in
+                self.saveHotkey(keyCode: keyCode, modifiers: flags, isModifier: isModifier)
+            }
+        }
+        .onDisappear {
+            stopRecording()
+        }
+    }
+
+    private func startRecording() {
+        isRecording = true
+        tracker.start()
+    }
+
+    private func stopRecording() {
+        tracker.stop()
+        isRecording = false
+    }
+    
+    private func saveHotkey(keyCode: UInt16, modifiers: UInt64, isModifier: Bool) {
+        var display = ""
+        
+        let hasControl = (modifiers & CGEventFlags.maskControl.rawValue) != 0
+        let hasOption = (modifiers & CGEventFlags.maskAlternate.rawValue) != 0
+        let hasShift = (modifiers & CGEventFlags.maskShift.rawValue) != 0
+        let hasCommand = (modifiers & CGEventFlags.maskCommand.rawValue) != 0
+        
+        var modsString = ""
+        if hasControl { modsString += "⌃" }
+        if hasOption { modsString += "⌥" }
+        if hasShift { modsString += "⇧" }
+        if hasCommand { modsString += "⌘" }
+
+        // Mapping special keys and modifiers
+        switch keyCode {
+        case 63, 179: display = "Fn (Globe)"
+        case 111: display = "F12"
+        case 105: display = "F13"
+        case 107: display = "F14"
+        case 113: display = "F15"
+        case 55, 54: display = "Command"
+        case 56, 60: display = "Shift"
+        case 58, 61: display = "Option"
+        case 59, 62: display = "Control"
+        case 49: display = "Space"
+        case 36: display = "Return"
+        case 53: display = "Escape"
+        case 48: display = "Tab"
+        case 51: display = "Delete"
+        case 123: display = "Left Arrow"
+        case 124: display = "Right Arrow"
+        case 125: display = "Down Arrow"
+        case 126: display = "Up Arrow"
+        default: 
+            // Optional: convert standard letters
+            if let scalar = UnicodeScalar(keyCode), (65...90).contains(keyCode) || (97...122).contains(keyCode) {
+                display = String(Character(scalar)).uppercased()
+            } else {
+                display = isModifier ? "Modifier (\(keyCode))" : "Key (\(keyCode))"
+            }
+        }
+        
+        if !isModifier && !modsString.isEmpty {
+            display = modsString + display
+        }
+
+        let newHotkey = CustomHotkey(keyCode: CGKeyCode(keyCode), modifierFlags: modifiers, displayName: display)
+        if let data = try? JSONEncoder().encode(newHotkey) {
+            self.customHotkeyString = data.base64EncodedString()
+        }
+
+        stopRecording()
     }
 }

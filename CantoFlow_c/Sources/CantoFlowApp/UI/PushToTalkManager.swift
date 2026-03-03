@@ -1,37 +1,47 @@
 import AppKit
 import CoreGraphics
 
-/// Trigger key types supported by PushToTalkManager
-enum TriggerKeyType: String, CaseIterable {
-    case fn = "fn"           // Fn / Globe key (modifier-based)
-    case f12 = "f12"         // F12 key
-    case f13 = "f13"         // F13 key
-    case f14 = "f14"         // F14 key
-    case f15 = "f15"         // F15 key (preferred for external keyboards)
+/// Represents an arbitrary recorded hotkey combination
+struct CustomHotkey: Codable, Equatable {
+    var keyCode: CGKeyCode
+    var modifierFlags: UInt64 // CGEventFlags.rawValue
+    var displayName: String
 
-    var displayName: String {
-        switch self {
-        case .fn: return "Fn (Globe)"
-        case .f12: return "F12"
-        case .f13: return "F13"
-        case .f14: return "F14"
-        case .f15: return "F15"
-        }
+    var isModifierOnly: Bool {
+        // Simple heuristic: if the hotkey has modifiers but NO regular key is pressed
+        // 54: Right Command, 55: Left Command
+        // 56: Left Shift, 60: Right Shift
+        // 57: Caps Lock
+        // 58: Left Option, 61: Right Option
+        // 59: Left Control, 62: Right Control
+        // 63: Fn (Old)
+        // 179: Fn/Globe (New Apple Silicon)
+        let mods: Set<CGKeyCode> = [54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 179]
+        return mods.contains(keyCode)
     }
 
-    var keyCode: Int64? {
-        switch self {
-        case .fn: return 63     // Fn key (modifier)
-        case .f12: return 111   // F12
-        case .f13: return 105   // F13
-        case .f14: return 107   // F14
-        case .f15: return 113   // F15
-        }
+    /// Mask of modifiers we actually care about (ignoring caps lock, num pad, etc)
+    static func normalizedModifiers(_ flags: UInt64) -> UInt64 {
+        let mask: UInt64 = CGEventFlags.maskShift.rawValue |
+                           CGEventFlags.maskControl.rawValue |
+                           CGEventFlags.maskAlternate.rawValue |
+                           CGEventFlags.maskCommand.rawValue |
+                           CGEventFlags.maskSecondaryFn.rawValue
+        return flags & mask
     }
 
-    var isModifierKey: Bool {
-        return self == .fn
-    }
+    /// Default starting configuration (Fn Key)
+    static let defaultFn = CustomHotkey(
+        keyCode: 179, // Use modern Globe key as default
+        modifierFlags: CGEventFlags.maskSecondaryFn.rawValue,
+        displayName: "Fn (Globe)"
+    )
+    
+    static let defaultF15 = CustomHotkey(
+        keyCode: 113,
+        modifierFlags: 0,
+        displayName: "F15"
+    )
 }
 
 /// Push-to-Talk state machine
@@ -61,7 +71,7 @@ final class PushToTalkManager {
     weak var delegate: PushToTalkDelegate?
 
     /// Current trigger key configuration
-    var triggerKey: TriggerKeyType = .fn {
+    var triggerKey: CustomHotkey = .defaultFn {
         didSet {
             if isRunning {
                 stop()
@@ -97,11 +107,11 @@ final class PushToTalkManager {
         // Determine which events to listen for
         var mask: CGEventMask = 0
 
-        if triggerKey.isModifierKey {
-            // Fn key uses flagsChanged
+        if triggerKey.isModifierOnly {
+            // Modifiers like Fn only emit flagsChanged
             mask = 1 << CGEventType.flagsChanged.rawValue
         } else {
-            // Function keys use keyDown/keyUp
+            // Normal keys always emit keyDown / keyUp (and we check flags inside handleEvent)
             mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
         }
 
@@ -167,21 +177,29 @@ final class PushToTalkManager {
 
     /// Handle keyboard event
     private func handleEvent(type: CGEventType, event: CGEvent) {
-        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+        let flags = CustomHotkey.normalizedModifiers(event.flags.rawValue)
+        let expectedFlags = CustomHotkey.normalizedModifiers(triggerKey.modifierFlags)
 
-        if triggerKey.isModifierKey {
-            // Handle Fn key (modifier-based)
-            if type == .flagsChanged && keyCode == triggerKey.keyCode {
-                let fnDown = event.flags.contains(.maskSecondaryFn)
-                handleKeyStateChange(isDown: fnDown)
+        if triggerKey.isModifierOnly {
+            // Handle pure modifier trigger (like Fn)
+            if type == .flagsChanged && (keyCode == triggerKey.keyCode || triggerKey.keyCode == 179 || triggerKey.keyCode == 63) {
+                // If it's a modifier, it is "down" if its specific bit is present in the current flags
+                // For Fn/Globe, we specifically check the maskSecondaryFn bit
+                let isDown = (flags & expectedFlags) != 0
+                handleKeyStateChange(isDown: isDown)
             }
         } else {
-            // Handle function keys (keyDown/keyUp)
+            // Handle normal keys (keyDown/keyUp) with modifiers
             guard keyCode == triggerKey.keyCode else { return }
+            
+            // To prevent firing on 'Shift+F12' when only 'F12' is requested, require flag equality
+            let isModifiersMatching = (flags == expectedFlags)
 
-            if type == .keyDown {
+            if type == .keyDown && isModifiersMatching {
                 handleKeyStateChange(isDown: true)
             } else if type == .keyUp {
+                // Ignore modifier mismatch on KeyUp to ensure we reliably stop recording
                 handleKeyStateChange(isDown: false)
             }
         }

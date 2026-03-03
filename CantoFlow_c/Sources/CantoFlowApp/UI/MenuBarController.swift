@@ -18,6 +18,13 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
 
     // Last transcription telemetry display
     private var telemetryItem: NSMenuItem?
+    
+    // Copy integration
+    private var lastResultText: String?
+    private var copyResultItem: NSMenuItem?
+    
+    // Usage hint display
+    private var hintItem: NSMenuItem?
 
     /// Reference to PushToTalkManager (set by AppDelegate)
     weak var pushToTalkManager: PushToTalkManager?
@@ -72,6 +79,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         let hint = NSMenuItem(title: "Hold Fn or F15 to record", action: nil, keyEquivalent: "")
         hint.isEnabled = false
         menu.addItem(hint)
+        hintItem = hint
 
         menu.addItem(.separator())
 
@@ -94,6 +102,17 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         telemetry.isEnabled = false
         menu.addItem(telemetry)
         telemetryItem = telemetry
+        
+        let copyResult = NSMenuItem(
+            title: "Copy Last Result",
+            action: #selector(copyLastResultToClipboard),
+            keyEquivalent: "c"
+        )
+        copyResult.target = self
+        copyResult.image = menuImage("doc.on.doc")
+        copyResult.isEnabled = false
+        menu.addItem(copyResult)
+        copyResultItem = copyResult
 
         menu.addItem(.separator())
 
@@ -155,7 +174,11 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         )
     }
 
-    // MARK: - Telemetry Display
+    // MARK: - Telemetry & Display Update
+
+    func updateHint(keyName: String) {
+        hintItem?.title = "Hold \(keyName) to record"
+    }
 
     private func updateTelemetryItem(_ result: PipelineResult) {
         let chars = result.finalText.count
@@ -169,6 +192,9 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         // Called from inside MainActor.run {} — already on main thread.
         // Direct assignment avoids an extra GCD block lifecycle.
         telemetryItem?.title = title
+        
+        lastResultText = result.finalText
+        copyResultItem?.isEnabled = true
     }
 
     // MARK: - UI Updates
@@ -252,6 +278,16 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
 
     @objc private func quitApp() {
         NSApp.terminate(nil)
+    }
+
+    @objc private func copyLastResultToClipboard() {
+        guard let text = lastResultText else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        
+        let preview = text.count > 15 ? text.prefix(15) + "..." : text
+        NotificationManager.shared.notify("Copied: \(preview)")
     }
 
     // MARK: - Recording Control

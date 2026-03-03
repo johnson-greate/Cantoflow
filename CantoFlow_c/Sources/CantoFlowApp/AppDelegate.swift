@@ -42,6 +42,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pushToTalkManager?.delegate = menuBarController
         pushToTalkManager?.triggerKey = resolveTriggerKey()
         pushToTalkManager?.start()
+        
+        if let keyName = pushToTalkManager?.triggerKey.displayName {
+            menuBarController?.updateHint(keyName: keyName)
+        }
 
         // Set back-reference for state management
         menuBarController?.pushToTalkManager = pushToTalkManager
@@ -51,10 +55,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Check permissions and show ready notification
         checkPermissionsAndNotify()
+
+        // Observe customHotkey changes in UserDefaults
+        UserDefaults.standard.addObserver(self, forKeyPath: "customHotkey", options: [.new], context: nil)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        UserDefaults.standard.removeObserver(self, forKeyPath: "customHotkey")
         pushToTalkManager?.stop()
+    }
+
+    override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
+        if keyPath == "customHotkey" {
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                let newKey = self.resolveTriggerKey()
+                if self.pushToTalkManager?.triggerKey != newKey {
+                    self.pushToTalkManager?.triggerKey = newKey
+                    self.menuBarController?.updateHint(keyName: newKey.displayName)
+                }
+            }
+        }
     }
 
     private func checkPermissionsAndNotify() {
@@ -71,21 +92,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Resolve trigger key based on config or auto-detect
-    private func resolveTriggerKey() -> TriggerKeyType {
+    private func resolveTriggerKey() -> CustomHotkey {
+        // First try to load custom recorded hotkey
+        if let string = UserDefaults.standard.string(forKey: "customHotkey"),
+           let data = Data(base64Encoded: string, options: .ignoreUnknownCharacters) ?? string.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode(CustomHotkey.self, from: data) {
+            return decoded
+        } else if let data = UserDefaults.standard.data(forKey: "customHotkey"),
+                  let decoded = try? JSONDecoder().decode(CustomHotkey.self, from: data) {
+            return decoded
+        }
+        
+        // Fall back to CLI config or hardware auto-detect
         switch config.triggerKey.lowercased() {
-        case "fn": return .fn
-        case "f12": return .f12
-        case "f13": return .f13
-        case "f14": return .f14
-        case "f15": return .f15
+        case "fn": return .defaultFn
+        case "f15": return .defaultF15
         case "auto":
             fallthrough
         default:
             let model = getHardwareModel()
             if model.contains("MacBook") {
-                return .fn
+                return .defaultFn
             } else {
-                return .f15
+                return .defaultF15
             }
         }
     }
