@@ -28,6 +28,7 @@ struct AppConfig {
 
     enum PolishProvider: String, CaseIterable {
         case auto
+        case gemini
         case openai
         case anthropic
         case qwen
@@ -84,20 +85,40 @@ struct AppConfig {
         }
     }
 
-    /// Auto-detect project root by looking for third_party/whisper.cpp
-    private static func detectProjectRoot() -> URL {
+    /// Auto-detect project root by looking for known project markers.
+    private static func detectProjectRoot(args: [String]) -> URL {
         let fm = FileManager.default
         let cwd = URL(fileURLWithPath: fm.currentDirectoryPath)
 
+        if let explicitRoot = explicitProjectRoot(from: args) {
+            return explicitRoot
+        }
+
+        func looksLikeProjectRoot(_ url: URL) -> Bool {
+            fm.fileExists(atPath: url.appendingPathComponent("CantoFlow_c/Package.swift").path) ||
+            fm.fileExists(atPath: url.appendingPathComponent("third_party/whisper.cpp").path)
+        }
+
         // Check current directory
-        if fm.fileExists(atPath: cwd.appendingPathComponent("third_party/whisper.cpp").path) {
+        if looksLikeProjectRoot(cwd) {
             return cwd
         }
 
         // Check parent directory (if running from CantoFlow_c)
         let parent = cwd.deletingLastPathComponent()
-        if fm.fileExists(atPath: parent.appendingPathComponent("third_party/whisper.cpp").path) {
+        if looksLikeProjectRoot(parent) {
             return parent
+        }
+
+        let executableURL = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        let executableCandidates = [
+            executableURL.deletingLastPathComponent(),
+            executableURL.deletingLastPathComponent().deletingLastPathComponent(),
+            executableURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent(),
+            executableURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent(),
+        ]
+        for path in executableCandidates where looksLikeProjectRoot(path) {
+            return path
         }
 
         // Check common locations
@@ -108,7 +129,7 @@ struct AppConfig {
         ]
 
         for path in commonPaths {
-            if fm.fileExists(atPath: path.appendingPathComponent("third_party/whisper.cpp").path) {
+            if looksLikeProjectRoot(path) {
                 return path
             }
         }
@@ -118,10 +139,21 @@ struct AppConfig {
         return cwd
     }
 
+    private static func explicitProjectRoot(from args: [String]) -> URL? {
+        var i = 1
+        while i < args.count {
+            if args[i] == "--project-root", i + 1 < args.count {
+                return URL(fileURLWithPath: args[i + 1])
+            }
+            i += 1
+        }
+        return nil
+    }
+
     static func fromArgs() -> AppConfig {
-        var config = AppConfig(projectRoot: detectProjectRoot())
         var i = 1
         let args = CommandLine.arguments
+        var config = AppConfig(projectRoot: detectProjectRoot(args: args))
 
         while i < args.count {
             let arg = args[i]
@@ -206,7 +238,7 @@ struct AppConfig {
           --audio-device NAME     Audio input device name (default: MacBook Air Microphone)
           --whisper PATH          Path to whisper-cli binary
           --model PATH            Path to whisper model file
-          --polish-provider NAME  LLM provider: auto, openai, anthropic, qwen, none (default: auto)
+          --polish-provider NAME  LLM provider: auto, gemini, openai, anthropic, qwen, none (default: auto)
           --fast-ime              Enable fast IME mode (paste raw, then replace with polished)
           --no-fast-ime           Disable fast IME mode
           --auto-paste            Auto-paste transcribed text
@@ -220,9 +252,11 @@ struct AppConfig {
           -h, --help              Show this help message
 
         Environment Variables:
+          GEMINI_API_KEY         Google Gemini API key for text polishing
+          DASHSCOPE_API_KEY      DashScope API key for Qwen text polishing
           OPENAI_API_KEY          OpenAI API key for text polishing
           ANTHROPIC_API_KEY       Anthropic API key for text polishing
-          QWEN_API_KEY            Qwen/DashScope API key for text polishing
+          QWEN_API_KEY            Legacy alias for Qwen/DashScope API key
 
         Push-to-Talk:
           Hold Fn (MacBook) or F15 (external keyboard) to record.

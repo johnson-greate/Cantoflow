@@ -6,7 +6,7 @@
 
 ## 🚀 方法一：自動安裝 (推薦)
 
-我們提供了一個自動化腳本，會幫你檢查依賴工具、編譯程式碼、並設定好全域捷徑。
+我們提供了一個自動化腳本，會幫你檢查依賴工具、安裝 `whisper.cpp` 與模型、編譯程式碼、並設定好全域捷徑。
 
 1. 打開終端機 (Terminal)。
 2. 切換到你下載或 git clone 下來的 `CantoFlow` 資料夾：
@@ -18,6 +18,16 @@
    bash install.sh
    ```
 4. 腳本執行完畢後，你就可以在任何地方直接輸入 `cantoflow` 來啟動程式了！
+
+自動安裝腳本會完成以下工作：
+- 檢查 Xcode Command Line Tools / Swift
+- 檢查或安裝 Homebrew 依賴：`cmake`、`ffmpeg`、`jq`
+- clone `third_party/whisper.cpp`
+- 編譯 `whisper-cli`
+- 下載 `large-v3-turbo`、`large-v3`、`small` 模型
+- 編譯 `CantoFlow_c`
+- 建立 `~/bin/cantoflow`
+- 建立 `~/.cantoflow.env`
 
 ---
 
@@ -33,6 +43,21 @@
   ```
 
 ### 2. 編譯專案
+先安裝 STT 依賴：
+```bash
+brew install cmake ffmpeg jq
+mkdir -p third_party
+git clone https://github.com/ggerganov/whisper.cpp.git third_party/whisper.cpp
+cmake -B third_party/whisper.cpp/build -S third_party/whisper.cpp
+cmake --build third_party/whisper.cpp/build -j 8
+cd third_party/whisper.cpp/models
+bash ./download-ggml-model.sh large-v3-turbo
+bash ./download-ggml-model.sh large-v3
+bash ./download-ggml-model.sh small
+cd /path/to/CantoFlow
+```
+
+然後編譯 Swift app：
 進入 Swift 程式碼所在目錄，並以 Release 模式進行編譯：
 ```bash
 cd CantoFlow_c
@@ -85,5 +110,11 @@ cantoflow
 1. 程式啟動後，會在右上角的 Menu Bar 出現圖示。
 2. 你可以前往 **Menu Bar > Settings > General** 設定你的**專屬觸發快捷鍵** (支援 Fn / Globe 鍵或任何組合)。
 3. 長按你設定的快捷鍵，開始說話，放開後自動送出並潤飾文字到你當前游標鎖定的視窗！
+
+若程式開到但未能錄音或未能上字，請先檢查：
+- `System Settings > Privacy & Security > Microphone`
+- `System Settings > Privacy & Security > Accessibility`
+- `System Settings > Privacy & Security > Input Monitoring`
+- `System Settings > Sound > Input` 是否選中正確麥克風
 
 歡迎使用 CantoFlow，也期待你提交 PR (Pull Requests) 與 Issues 與社群共同成長！

@@ -25,6 +25,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
     
     // Usage hint display
     private var hintItem: NSMenuItem?
+    private var inputDeviceItem: NSMenuItem?
 
     /// Reference to PushToTalkManager (set by AppDelegate)
     weak var pushToTalkManager: PushToTalkManager?
@@ -80,6 +81,11 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         hint.isEnabled = false
         menu.addItem(hint)
         hintItem = hint
+
+        let inputDevice = NSMenuItem(title: "Input: \(AudioDeviceManager.shared.currentSelectionDisplayName())", action: nil, keyEquivalent: "")
+        inputDevice.isEnabled = false
+        menu.addItem(inputDevice)
+        inputDeviceItem = inputDevice
 
         menu.addItem(.separator())
 
@@ -178,6 +184,10 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
 
     func updateHint(keyName: String) {
         hintItem?.title = "Hold \(keyName) to record"
+    }
+
+    func updateInputDevice(name: String) {
+        inputDeviceItem?.title = "Input: \(name)"
     }
 
     private func updateTelemetryItem(_ result: PipelineResult) {

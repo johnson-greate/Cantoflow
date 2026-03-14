@@ -3,6 +3,7 @@ import Foundation
 /// Category of vocabulary entry
 enum VocabCategory: String, Codable, CaseIterable {
     case place = "place"           // 地名
+    case action = "action"         // 動作
     case person = "person"         // 人名
     case slang = "slang"           // 口語/俗語
     case food = "food"             // 食物
@@ -15,6 +16,7 @@ enum VocabCategory: String, Codable, CaseIterable {
     var displayName: String {
         switch self {
         case .place: return "地名"
+        case .action: return "動作"
         case .person: return "人名"
         case .slang: return "口語/俗語"
         case .food: return "食物"
@@ -85,6 +87,20 @@ struct PersonalVocabulary: Codable {
     var terms: [String] {
         return entries.map { $0.term }
     }
+}
+
+struct VocabularyImportPreview: Identifiable {
+    let id = UUID()
+    let sourceURL: URL
+    let totalEntries: Int
+    let importableEntries: [VocabEntry]
+    let duplicateTerms: [String]
+    let blankTerms: Int
+    let capacityRemaining: Int
+
+    var importableCount: Int { importableEntries.count }
+    var duplicateCount: Int { duplicateTerms.count }
+    var willFillToCapacity: Bool { importableCount < totalEntries - duplicateCount - blankTerms }
 }
 
 /// Hong Kong common vocabulary (read-only, bundled with app)
@@ -178,12 +194,111 @@ final class VocabularyStore {
         }
     }
 
+    func exportPersonalVocabulary(to url: URL) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let data = try encoder.encode(personal)
+        try data.write(to: url, options: .atomic)
+    }
+
+    func previewImportPersonalVocabulary(from url: URL) throws -> VocabularyImportPreview {
+        let data = try Data(contentsOf: url)
+        let imported = try JSONDecoder().decode(PersonalVocabulary.self, from: data)
+
+        var existingTerms = Set(personal.entries.map {
+            $0.term.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        })
+        var importableEntries: [VocabEntry] = []
+        var duplicateTerms: [String] = []
+        var blankTerms = 0
+        let capacityRemaining = max(0, personal.maxCapacity - personal.entries.count)
+
+        for entry in imported.entries {
+            let normalized = entry.term.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if normalized.isEmpty {
+                blankTerms += 1
+                continue
+            }
+            if existingTerms.contains(normalized) {
+                duplicateTerms.append(entry.term)
+                continue
+            }
+            if importableEntries.count < capacityRemaining {
+                importableEntries.append(entry)
+                existingTerms.insert(normalized)
+            }
+        }
+
+        return VocabularyImportPreview(
+            sourceURL: url,
+            totalEntries: imported.entries.count,
+            importableEntries: importableEntries,
+            duplicateTerms: duplicateTerms,
+            blankTerms: blankTerms,
+            capacityRemaining: capacityRemaining
+        )
+    }
+
+    @discardableResult
+    func importPersonalVocabulary(from url: URL) throws -> Int {
+        let preview = try previewImportPersonalVocabulary(from: url)
+        var addedCount = 0
+
+        for entry in preview.importableEntries {
+            if personal.add(entry) {
+                addedCount += 1
+            }
+        }
+
+        if addedCount > 0 {
+            savePersonalVocabulary()
+        }
+
+        return addedCount
+    }
+
     func addPersonalEntry(_ entry: VocabEntry) -> Bool {
+        guard !containsPersonalTerm(entry.term) else { return false }
         let success = personal.add(entry)
         if success {
             savePersonalVocabulary()
         }
         return success
+    }
+
+    @discardableResult
+    func importHKStarterPack(limit: Int = 100) -> Int {
+        importEntries(hkStarterPackEntries, limit: limit)
+    }
+
+    @discardableResult
+    func importHKStarterPack2(limit: Int = 100) -> Int {
+        importEntries(hkStarterPackEntries2, limit: limit)
+    }
+
+    @discardableResult
+    private func importEntries(_ source: [VocabEntry], limit: Int) -> Int {
+        var existingTerms = Set(personal.entries.map(\.term))
+        var addedCount = 0
+
+        for entry in source.prefix(limit) {
+            if personal.isFull {
+                break
+            }
+            if existingTerms.contains(entry.term) {
+                continue
+            }
+            if personal.add(entry) {
+                existingTerms.insert(entry.term)
+                addedCount += 1
+            }
+        }
+
+        if addedCount > 0 {
+            savePersonalVocabulary()
+        }
+
+        return addedCount
     }
 
     func removePersonalEntry(id: UUID) {
@@ -192,8 +307,19 @@ final class VocabularyStore {
     }
 
     func updatePersonalEntry(_ entry: VocabEntry) {
+        guard !containsPersonalTerm(entry.term, excluding: entry.id) else { return }
         personal.update(entry)
         savePersonalVocabulary()
+    }
+
+    func containsPersonalTerm(_ term: String, excluding id: UUID? = nil) -> Bool {
+        let normalized = term.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return false }
+
+        return personal.entries.contains { entry in
+            if let id, entry.id == id { return false }
+            return entry.term.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalized
+        }
     }
 
     // MARK: - HK Common Vocabulary
@@ -303,6 +429,78 @@ final class VocabularyStore {
                 "青馬大橋", "汀九橋", "昂船洲大橋", "大橋"
             ]
         )
+    }
+
+    private var hkStarterPackEntries: [VocabEntry] {
+        let placeTerms = [
+            "新蒲崗", "啟德", "九龍城", "土瓜灣", "何文田", "黃埔", "紅磡", "佐敦",
+            "太子", "旺角", "深水埗", "長沙灣", "美孚", "荃灣", "葵芳", "青衣",
+            "沙田", "大圍", "馬鞍山", "大埔", "元朗", "天水圍", "屯門", "將軍澳", "西貢"
+        ].map {
+            VocabEntry(term: $0, pronunciationHint: nil, category: .place, notes: "香港常用地名")
+        }
+
+        let actionTerms = [
+            "開會", "傾偈", "跟進", "覆核", "簽收", "批核", "送貨", "對數",
+            "對稿", "執貨", "執房", "補鐘", "上堂", "落堂", "開工", "收工",
+            "返工", "放工", "交租", "排隊", "拎貨", "上落", "夾單", "交更", "埋單"
+        ].map {
+            VocabEntry(term: $0, pronunciationHint: nil, category: .action, notes: "香港常用動作")
+        }
+
+        let slangTerms = [
+            "唔該", "唔緊要", "冇問題", "搞掂", "得閒", "等陣", "遲啲", "即刻",
+            "頭先", "而家", "聽日", "後日", "做咩", "點算", "點搞", "係咪",
+            "真係", "梗係", "未必", "算啦", "好彩", "唔錯", "好正", "勁正", "痴線", "頂唔順"
+        ].map {
+            VocabEntry(term: $0, pronunciationHint: nil, category: .slang, notes: "香港常用口頭禪")
+        }
+
+        let foodTerms = [
+            "菠蘿油", "絲襪奶茶", "鴛鴦", "凍檸茶", "檸蜜", "西多士", "蛋撻", "雞尾包",
+            "叉燒包", "餐蛋麵", "公仔麵", "常餐", "下午茶餐", "碟頭飯", "雲吞麵", "牛腩麵",
+            "魚蛋", "牛雜", "雞蛋仔", "格仔餅", "車仔麵", "燒賣", "腸粉", "蝦餃", "馬拉糕"
+        ].map {
+            VocabEntry(term: $0, pronunciationHint: nil, category: .food, notes: "香港常用食物")
+        }
+
+        return placeTerms + actionTerms + slangTerms + foodTerms
+    }
+
+    private var hkStarterPackEntries2: [VocabEntry] {
+        let mallTerms = [
+            "AIRSIDE", "Mikiki", "K11", "K11 Musea", "海港城", "朗豪坊", "新城市廣場", "apm",
+            "德福廣場", "又一城", "時代廣場", "希慎廣場", "圓方", "MegaBox", "荷里活廣場", "V Walk",
+            "PopCorn", "將軍澳廣場", "新都城", "形點", "YOHO Mall", "屯門市廣場", "如心廣場", "新世紀廣場", "奧海城"
+        ].map {
+            VocabEntry(term: $0, pronunciationHint: nil, category: .place, notes: "香港常用商場")
+        }
+
+        let estateTerms = [
+            "太古城", "美孚新邨", "黃埔花園", "麗港城", "杏花邨", "嘉湖山莊", "沙田第一城", "新都城",
+            "將軍澳中心", "維景灣畔", "新港城", "海怡半島", "康怡花園", "匯景花園", "淘大花園", "德福花園",
+            "譽港灣", "翔龍灣", "港灣豪庭", "泓景臺", "君匯港", "昇悅居", "宇晴軒", "柏景灣", "浪澄灣"
+        ].map {
+            VocabEntry(term: $0, pronunciationHint: nil, category: .place, notes: "香港常用屋苑")
+        }
+
+        let roadTerms = [
+            "彌敦道", "亞皆老街", "太子道西", "太子道東", "觀塘道", "旺角道", "上海街", "廣東道",
+            "窩打老道", "公主道", "獅子山隧道公路", "龍翔道", "青山公路", "沙田路", "大埔公路", "吐露港公路",
+            "將軍澳道", "寶琳北路", "康城路", "宏基街", "五芳街", "大有街", "爵祿街", "彩虹道", "協調道"
+        ].map {
+            VocabEntry(term: $0, pronunciationHint: nil, category: .place, notes: "香港常用街道")
+        }
+
+        let officeTerms = [
+            "會議室", "辦公室", "前台", "接待處", "茶水間", "影印機", "會議紀錄", "跟單",
+            "報價單", "發票", "送貨單", "採購單", "請假", "打卡", "簽到", "交表",
+            "入數", "對單", "報銷", "入職", "離職", "交接", "開票", "落單", "出貨"
+        ].map {
+            VocabEntry(term: $0, pronunciationHint: nil, category: .action, notes: "香港辦公室常用詞")
+        }
+
+        return mallTerms + estateTerms + roadTerms + officeTerms
     }
 
     // MARK: - Prompt Generation

@@ -26,6 +26,7 @@ final class AudioCapture {
     private var audioFile: AVAudioFile?
     private var isRecording = false
     private var recordingURL: URL?
+    private(set) var activeInputDeviceName: String?
 
     /// Callback for real-time audio level updates (normalized 0.0 to 1.0)
     var onAudioLevelUpdate: ((Float) -> Void)?
@@ -74,6 +75,7 @@ final class AudioCapture {
             throw AudioCaptureError.recordingInProgress
         }
 
+        activeInputDeviceName = AudioDeviceManager.shared.configureInputDevice(for: audioEngine)
         let inputNode = audioEngine.inputNode
 
         // Create target format: 16kHz mono PCM

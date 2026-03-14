@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // MARK: - Settings Store
@@ -6,7 +7,7 @@ import SwiftUI
 /// live AppKit pipeline.  Previously ObservableObject, which caused
 /// NSConcretePointerArray Combine subscriber crashes on macOS 26 beta whenever
 /// a CA transaction committed while the settings window was open.
-/// ModelsTab now binds directly to @AppStorage("sttBackend") instead.
+/// The settings tabs bind directly to @AppStorage instead.
 final class SettingsStore {
     var onSttBackendChange: ((String) -> Void)?
 }
@@ -24,8 +25,8 @@ struct SettingsView: View {
                 .tabItem { Label("Vocabulary", systemImage: "text.book.closed") }
                 .tag(1)
 
-            ModelsTab()
-                .tabItem { Label("Models", systemImage: "cpu") }
+            APIKeysTab()
+                .tabItem { Label("API Keys", systemImage: "key.fill") }
                 .tag(2)
         }
         .frame(width: 560, height: 440)
@@ -38,6 +39,9 @@ struct GeneralTab: View {
     @AppStorage("launchAtLogin") private var launchAtLogin = false
     @AppStorage("soundFeedback") private var soundFeedback = true
     @AppStorage("polishStyle") private var polishStyleRaw: String = PolishStyle.cantonese.rawValue
+    @AppStorage(AudioDeviceManager.preferredInputDeviceDefaultsKey) private var preferredInputDeviceUID: String = ""
+    @State private var inputDevices: [AudioInputDevice] = AudioDeviceManager.shared.availableInputDevices()
+    @State private var startupStatusMessage: String = ""
 
     private var polishStyle: PolishStyle {
         PolishStyle(rawValue: polishStyleRaw) ?? .cantonese
@@ -47,11 +51,16 @@ struct GeneralTab: View {
         Form {
             Section("Startup") {
                 Toggle("Launch at Login", isOn: $launchAtLogin)
-                    .disabled(true)
 
-                Text("Launch at Login requires installation as a .app bundle. Not available in CLI mode.")
+                Text("Uses a per-user LaunchAgent, so it works for the current CLI-style installation too.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                if !startupStatusMessage.isEmpty {
+                    Text(startupStatusMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
 
@@ -59,6 +68,23 @@ struct GeneralTab: View {
                 HotkeyRecorderView()
                 
                 Text("Click the box above, then type any key or key combination to record it (e.g. F12, Option+Space, or Fn).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Input Device") {
+                Picker("Microphone", selection: $preferredInputDeviceUID) {
+                    Text(systemDefaultInputLabel).tag("")
+                    ForEach(inputDevices) { device in
+                        Text(device.name).tag(device.uid)
+                    }
+                }
+
+                Button("Refresh Device List") {
+                    reloadInputDevices()
+                }
+
+                Text("Selected microphone is used on the next recording. If the chosen device is unavailable, CantoFlow falls back to the system default input.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -91,6 +117,34 @@ struct GeneralTab: View {
         }
         .formStyle(.grouped)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .onAppear {
+            reloadInputDevices()
+            launchAtLogin = LaunchAtLoginManager.shared.isEnabled
+        }
+        .onChange(of: launchAtLogin) { newValue in
+            do {
+                try LaunchAtLoginManager.shared.setEnabled(newValue)
+                startupStatusMessage = newValue
+                    ? "Launch at Login enabled."
+                    : "Launch at Login disabled."
+            } catch {
+                startupStatusMessage = "Launch at Login update failed: \(error.localizedDescription)"
+                launchAtLogin = LaunchAtLoginManager.shared.isEnabled
+            }
+        }
+    }
+
+    private var systemDefaultInputLabel: String {
+        let defaultName = AudioDeviceManager.shared.defaultInputDevice()?.name ?? "System Default"
+        return "System Default (\(defaultName))"
+    }
+
+    private func reloadInputDevices() {
+        inputDevices = AudioDeviceManager.shared.availableInputDevices()
+        if !preferredInputDeviceUID.isEmpty,
+           !inputDevices.contains(where: { $0.uid == preferredInputDeviceUID }) {
+            preferredInputDeviceUID = ""
+        }
     }
 }
 
@@ -104,11 +158,53 @@ struct GeneralTab: View {
 // it is immune to that CA/Combine interaction bug.
 
 struct VocabularyTab: View {
+    private enum VocabularyFilterTab: String, CaseIterable, Identifiable {
+        case all
+        case place
+        case action
+        case slang
+        case food
+        case company
+        case tech
+        case other
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .all: return "全部"
+            case .place: return "地名"
+            case .action: return "動作"
+            case .slang: return "口頭禪"
+            case .food: return "食物"
+            case .company: return "公司"
+            case .tech: return "技術"
+            case .other: return "其他"
+            }
+        }
+
+        func matches(_ category: VocabCategory) -> Bool {
+            switch self {
+            case .all: return true
+            case .place: return category == .place
+            case .action: return category == .action
+            case .slang: return category == .slang
+            case .food: return category == .food
+            case .company: return category == .company
+            case .tech: return category == .tech
+            case .other: return category == .other || category == .person || category == .product || category == .transport
+            }
+        }
+    }
+
     @State private var entries: [VocabEntry] = VocabularyStore.shared.personal.entries
     @State private var searchText: String = ""
     @State private var selectedID: UUID?
     @State private var showingAddSheet = false
     @State private var editingEntry: VocabEntry?
+    @State private var selectedTab: VocabularyFilterTab = .all
+    @State private var starterPackMessage: String = ""
+    @State private var importPreview: VocabularyImportPreview?
     // Staging: holds the entry returned by AddEditTermSheet until the sheet's
     // dismiss animation completes.  The actual VocabularyStore write + list
     // reload happens in onDismiss, which fires after the animation finishes and
@@ -118,9 +214,11 @@ struct VocabularyTab: View {
     @State private var stagedEdit: VocabEntry? = nil
 
     private var filteredEntries: [VocabEntry] {
-        guard !searchText.isEmpty else { return entries }
+        let categoryFiltered = entries.filter { selectedTab.matches($0.category) }
+
+        guard !searchText.isEmpty else { return categoryFiltered }
         let q = searchText.lowercased()
-        return entries.filter {
+        return categoryFiltered.filter {
             $0.term.lowercased().contains(q) ||
             $0.category.displayName.lowercased().contains(q) ||
             ($0.pronunciationHint?.lowercased().contains(q) ?? false) ||
@@ -131,7 +229,9 @@ struct VocabularyTab: View {
     private var isFull: Bool { entries.count >= 500 }
 
     private func reload() {
-        entries = VocabularyStore.shared.personal.entries
+        DispatchQueue.main.async {
+            entries = VocabularyStore.shared.personal.entries
+        }
     }
 
     private func addEntry(_ entry: VocabEntry) {
@@ -149,15 +249,107 @@ struct VocabularyTab: View {
         reload()
     }
 
+    private func importStarterPack() {
+        let added = VocabularyStore.shared.importHKStarterPack(limit: 100)
+        DispatchQueue.main.async {
+            selectedTab = .all
+            starterPackMessage = added > 0
+                ? "Imported Starter Pack #1: \(added) Hong Kong terms."
+                : "No new starter terms imported."
+            reload()
+        }
+    }
+
+    private func importStarterPack2() {
+        let added = VocabularyStore.shared.importHKStarterPack2(limit: 100)
+        DispatchQueue.main.async {
+            selectedTab = .all
+            starterPackMessage = added > 0
+                ? "Imported Starter Pack #2: \(added) malls / estates / roads / office terms."
+                : "No new starter terms imported."
+            reload()
+        }
+    }
+
+    private func exportVocabulary() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "cantoflow-personal-vocab.json"
+        panel.allowedContentTypes = [.json]
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            try VocabularyStore.shared.exportPersonalVocabulary(to: url)
+            DispatchQueue.main.async {
+                starterPackMessage = "Exported personal vocabulary to \(url.lastPathComponent)."
+            }
+        } catch {
+            DispatchQueue.main.async {
+                starterPackMessage = "Export failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func importVocabulary() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            importPreview = try VocabularyStore.shared.previewImportPersonalVocabulary(from: url)
+        } catch {
+            DispatchQueue.main.async {
+                starterPackMessage = "Import failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func confirmImportVocabulary() {
+        guard let preview = importPreview else { return }
+
+        do {
+            let added = try VocabularyStore.shared.importPersonalVocabulary(from: preview.sourceURL)
+            DispatchQueue.main.async {
+                selectedTab = .all
+                starterPackMessage = added > 0
+                    ? "Imported \(added) terms from \(preview.sourceURL.lastPathComponent)."
+                    : "No new terms imported from \(preview.sourceURL.lastPathComponent)."
+                importPreview = nil
+                reload()
+            }
+        } catch {
+            DispatchQueue.main.async {
+                starterPackMessage = "Import failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            List(filteredEntries, id: \.id, selection: $selectedID) { entry in
-                VocabRowView(entry: entry)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
+            vocabularyTabs
+
+            if !starterPackMessage.isEmpty {
+                Text(starterPackMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 6)
+            }
+
+            List(filteredEntries, id: \.id) { entry in
+                Button {
+                    DispatchQueue.main.async {
                         selectedID = entry.id
                         editingEntry = entry
                     }
+                } label: {
+                    VocabRowView(entry: entry)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                         Button(role: .destructive) {
                             let id = entry.id
@@ -184,6 +376,10 @@ struct VocabularyTab: View {
                 isFull: isFull,
                 hasSelection: selectedID != nil,
                 count: entries.count,
+                onExport: exportVocabulary,
+                onImport: importVocabulary,
+                onImportStarterPack: importStarterPack,
+                onImportStarterPack2: importStarterPack2,
                 onAdd: { showingAddSheet = true },
                 onRemove: {
                     if let id = selectedID {
@@ -214,6 +410,13 @@ struct VocabularyTab: View {
         }) { entry in
             AddEditTermSheet(entry: entry) { stagedEdit = $0 }
         }
+        .sheet(item: $importPreview) { preview in
+            VocabularyImportPreviewSheet(
+                preview: preview,
+                onCancel: { importPreview = nil },
+                onConfirm: { confirmImportVocabulary() }
+            )
+        }
     }
 
     @ViewBuilder
@@ -243,6 +446,88 @@ struct VocabularyTab: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
+
+    private var vocabularyTabs: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(VocabularyFilterTab.allCases) { tab in
+                    Button(tab.title) {
+                        selectedTab = tab
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(selectedTab == tab ? Color.accentColor.opacity(0.16) : Color(NSColor.controlBackgroundColor))
+                    .foregroundStyle(selectedTab == tab ? Color.accentColor : Color.primary)
+                    .clipShape(Capsule())
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+        }
+    }
+}
+
+private struct VocabularyImportPreviewSheet: View {
+    let preview: VocabularyImportPreview
+    let onCancel: () -> Void
+    let onConfirm: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    private var duplicatePreview: String {
+        let sample = preview.duplicateTerms.prefix(12)
+        if sample.isEmpty { return "None" }
+        return sample.joined(separator: "、")
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Import Preview") {
+                    LabeledContent("File", value: preview.sourceURL.lastPathComponent)
+                    LabeledContent("Total entries", value: "\(preview.totalEntries)")
+                    LabeledContent("Can import", value: "\(preview.importableCount)")
+                    LabeledContent("Duplicates", value: "\(preview.duplicateCount)")
+                    LabeledContent("Blank terms", value: "\(preview.blankTerms)")
+                    LabeledContent("Capacity remaining", value: "\(preview.capacityRemaining)")
+                }
+
+                Section("Duplicate Terms Sample") {
+                    Text(duplicatePreview)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if preview.willFillToCapacity {
+                    Section("Capacity Note") {
+                        Text("Import will stop at the 500-term limit. Some valid terms may remain unimported.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            .navigationTitle("Preview Import")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        onCancel()
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Confirm Import") {
+                        onConfirm()
+                        dismiss()
+                    }
+                    .disabled(preview.importableCount == 0)
+                }
+            }
+        }
+        .frame(width: 460, height: 360)
+    }
 }
 
 // MARK: - Vocabulary Bottom Bar
@@ -251,11 +536,57 @@ private struct VocabBottomBar: View {
     let isFull: Bool
     let hasSelection: Bool
     let count: Int
+    let onExport: () -> Void
+    let onImport: () -> Void
+    let onImportStarterPack: () -> Void
+    let onImportStarterPack2: () -> Void
     let onAdd: () -> Void
     let onRemove: () -> Void
 
     var body: some View {
         HStack(spacing: 0) {
+            Button(action: onExport) {
+                Text("Export")
+                    .font(.caption)
+                    .frame(minWidth: 54, minHeight: 22)
+            }
+            .buttonStyle(.borderless)
+            .help("Export personal vocabulary JSON")
+
+            Divider().frame(height: 18).padding(.horizontal, 1)
+
+            Button(action: onImport) {
+                Text("Import")
+                    .font(.caption)
+                    .frame(minWidth: 54, minHeight: 22)
+            }
+            .buttonStyle(.borderless)
+            .help("Import personal vocabulary JSON")
+
+            Divider().frame(height: 18).padding(.horizontal, 1)
+
+            Button(action: onImportStarterPack) {
+                Text("Starter #1")
+                    .font(.caption)
+                    .frame(minWidth: 68, minHeight: 22)
+            }
+            .buttonStyle(.borderless)
+            .disabled(isFull)
+            .help("Import 100 Hong Kong starter terms")
+
+            Divider().frame(height: 18).padding(.horizontal, 1)
+
+            Button(action: onImportStarterPack2) {
+                Text("Starter #2")
+                    .font(.caption)
+                    .frame(minWidth: 68, minHeight: 22)
+            }
+            .buttonStyle(.borderless)
+            .disabled(isFull)
+            .help("Import malls, estates, roads, and office terms")
+
+            Divider().frame(height: 18).padding(.horizontal, 1)
+
             Button(action: onAdd) {
                 Image(systemName: "plus")
                     .frame(width: 26, height: 22)
@@ -344,7 +675,11 @@ struct AddEditTermSheet: View {
     }
 
     private var isEditing: Bool { existingEntry != nil }
-    private var canSave: Bool { !term.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var normalizedTerm: String { term.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var isDuplicate: Bool {
+        VocabularyStore.shared.containsPersonalTerm(normalizedTerm, excluding: existingEntry?.id)
+    }
+    private var canSave: Bool { !normalizedTerm.isEmpty && !isDuplicate }
 
     var body: some View {
         NavigationStack {
@@ -352,6 +687,12 @@ struct AddEditTermSheet: View {
                 Section("Term") {
                     TextField("Word or phrase (e.g. 香港中文大學)", text: $term)
                     TextField("Pronunciation hint (optional)", text: $pronunciationHint)
+
+                    if isDuplicate {
+                        Text("This term already exists in your personal vocabulary.")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
                 }
 
                 Section("Category") {
@@ -377,7 +718,7 @@ struct AddEditTermSheet: View {
                     Button(isEditing ? "Save" : "Add") {
                         let entry = VocabEntry(
                             id: existingEntry?.id ?? UUID(),
-                            term: term.trimmingCharacters(in: .whitespacesAndNewlines),
+                            term: normalizedTerm,
                             pronunciationHint: pronunciationHint.isEmpty ? nil : pronunciationHint,
                             category: category,
                             notes: notes.isEmpty ? nil : notes
@@ -397,29 +738,278 @@ struct AddEditTermSheet: View {
     }
 }
 
-// MARK: - Models Tab
+// MARK: - API Keys Tab
 
-struct ModelsTab: View {
+struct APIKeysTab: View {
+    @AppStorage("geminiAPIKey") private var geminiAPIKey: String = ""
+    @AppStorage("dashscopeAPIKey") private var dashscopeAPIKey: String = ""
     @AppStorage("qwenAPIKey") private var qwenAPIKey: String = ""
     @AppStorage("openaiAPIKey") private var openaiAPIKey: String = ""
-    @AppStorage("anthropicAPIKey") private var anthropicAPIKey: String = ""
+    @State private var statusMessage: String = ""
+    @State private var editingFieldID: String?
+    @State private var testState: APIKeyTestState = .idle
 
     var body: some View {
-        Form {
-            Section {
-                SecureField("Qwen API Key (QWEN_API_KEY)", text: $qwenAPIKey)
-                SecureField("OpenAI API Key (OPENAI_API_KEY)", text: $openaiAPIKey)
-                SecureField("Anthropic API Key (ANTHROPIC_API_KEY)", text: $anthropicAPIKey)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                GroupBox("Google Gemini") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        apiKeyField(
+                            title: "Gemini API Key",
+                            envName: "GEMINI_API_KEY",
+                            text: $geminiAPIKey
+                        )
 
-                Text("Stored in app preferences. Environment variables take precedence. Takes effect immediately.")
+                        Text("Gemini polish 會用 Google Gemini endpoint 去潤飾 Whisper 文字，並配合 vocabulary 做校正。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                GroupBox("Qwen / DashScope") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        apiKeyField(
+                            title: "DashScope API Key",
+                            envName: "DASHSCOPE_API_KEY",
+                            text: $dashscopeAPIKey
+                        )
+                        apiKeyField(
+                            title: "Qwen API Key (legacy alias)",
+                            envName: "QWEN_API_KEY",
+                            text: $qwenAPIKey
+                        )
+
+                        Text("Qwen polish 會用這個 key 去潤飾 Whisper 文字，並配合 vocabulary 做校正。建議填 DashScope key。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                GroupBox("Other Providers") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        apiKeyField(
+                            title: "OpenAI API Key",
+                            envName: "OPENAI_API_KEY",
+                            text: $openaiAPIKey
+                        )
+                    }
+                }
+
+                HStack(spacing: 10) {
+                    Circle()
+                        .fill(testState.color)
+                        .frame(width: 10, height: 10)
+
+                    Button("Test API Key Endpoint") {
+                        testAPIKeyEndpoint()
+                    }
+
+                    Text(testState.message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if !statusMessage.isEmpty {
+                    Text(statusMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Text("API keys are stored in app preferences immediately. Testing uses the first available key in this order: Gemini, DashScope/Qwen, OpenAI.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            } header: {
-                Text("LLM Polish API Keys")
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(16)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    @ViewBuilder
+    private func apiKeyField(title: String, envName: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.subheadline.weight(.medium))
+            Text(envName)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+
+            if editingFieldID == envName {
+                SecureField("", text: text, prompt: Text("Paste API key here"))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+                    .onSubmit {
+                        statusMessage = ""
+                        editingFieldID = nil
+                    }
+            } else {
+                Button {
+                    statusMessage = ""
+                    editingFieldID = envName
+                } label: {
+                    HStack {
+                        Text(maskedAPIKey(text.wrappedValue))
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundStyle(text.wrappedValue.isEmpty ? .secondary : .primary)
+                        Spacer()
+                        Text("Edit")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(Color(NSColor.textBackgroundColor))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.gray.opacity(0.25), lineWidth: 1)
+                    )
+                    .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
             }
         }
-        .formStyle(.grouped)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func maskedAPIKey(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Paste API key here" }
+        guard trimmed.count > 8 else { return String(repeating: "•", count: trimmed.count) }
+
+        let prefix = String(trimmed.prefix(4))
+        let suffix = String(trimmed.suffix(4))
+        let mask = String(repeating: "•", count: max(8, trimmed.count - 8))
+        return prefix + mask + suffix
+    }
+
+    private func testAPIKeyEndpoint() {
+        guard let target = currentTestTarget() else {
+            testState = .failure("No API key entered")
+            return
+        }
+
+        testState = .testing("Testing \(target.providerName)...")
+
+        Task {
+            let result = await performEndpointTest(target: target)
+            await MainActor.run {
+                switch result {
+                case .success:
+                    testState = .success("\(target.providerName) endpoint OK (200)")
+                case .failure(let message):
+                    testState = .failure("\(target.providerName) failed: \(message)")
+                }
+            }
+        }
+    }
+
+    private func currentTestTarget() -> APIKeyTestTarget? {
+        let dashscope = dashscopeAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let gemini = geminiAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let qwen = qwenAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let openai = openaiAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if !gemini.isEmpty {
+            return .gemini(gemini)
+        }
+        if !dashscope.isEmpty {
+            return .dashscope(dashscope)
+        }
+        if !qwen.isEmpty {
+            return .dashscope(qwen)
+        }
+        if !openai.isEmpty {
+            return .openAI(openai)
+        }
+        return nil
+    }
+
+    private func performEndpointTest(target: APIKeyTestTarget) async -> APIKeyEndpointTestResult {
+        do {
+            let request = target.request
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                return .failure("invalid response")
+            }
+
+            if httpResponse.statusCode == 200 {
+                return .success(())
+            }
+            return .failure("HTTP \(httpResponse.statusCode)")
+        } catch {
+            return .failure(error.localizedDescription)
+        }
+    }
+}
+
+private enum APIKeyEndpointTestResult {
+    case success(Void)
+    case failure(String)
+}
+
+private enum APIKeyTestState {
+    case idle
+    case testing(String)
+    case success(String)
+    case failure(String)
+
+    var color: Color {
+        switch self {
+        case .idle: return .gray
+        case .testing: return .orange
+        case .success: return .green
+        case .failure: return .red
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .idle:
+            return "No test run yet"
+        case .testing(let message), .success(let message), .failure(let message):
+            return message
+        }
+    }
+}
+
+private enum APIKeyTestTarget {
+    case gemini(String)
+    case dashscope(String)
+    case openAI(String)
+
+    var providerName: String {
+        switch self {
+        case .gemini: return "Gemini"
+        case .dashscope: return "DashScope"
+        case .openAI: return "OpenAI"
+        }
+    }
+
+    var request: URLRequest {
+        switch self {
+        case .gemini(let apiKey):
+            var request = URLRequest(url: URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")!)
+            request.httpMethod = "POST"
+            request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = """
+            {"contents":[{"parts":[{"text":"ping"}]}]}
+            """.data(using: .utf8)
+            return request
+        case .dashscope(let apiKey):
+            var request = URLRequest(url: URL(string: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions")!)
+            request.httpMethod = "POST"
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = """
+            {"model":"qwen3.5-plus","messages":[{"role":"user","content":"ping"}],"max_tokens":1,"temperature":0}
+            """.data(using: .utf8)
+            return request
+        case .openAI(let apiKey):
+            var request = URLRequest(url: URL(string: "https://api.openai.com/v1/models")!)
+            request.httpMethod = "GET"
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            return request
+        }
     }
 }
 

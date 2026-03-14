@@ -24,7 +24,7 @@
    ```bash
    bash install.sh
    ```
-   *腳本會自動為你檢查編譯環境、建立全域捷徑，並導引你設定 API Keys。*
+   *腳本會自動安裝 Homebrew 依賴、下載/編譯 `whisper.cpp`、下載必要模型、編譯 app、建立全域捷徑，並導引你設定 API Keys。*
 
 3. **設定 API Key**
    你需要在大語言模型供應商 (例如 Aliyun DashScope 通義千問) 取得 API Key，並填入 `~/.cantoflow.env` 檔案中：
@@ -37,7 +37,12 @@
    ```bash
    cantoflow
    ```
-   你可以點擊右上角 Menu Bar 圖示進入 **Settings...** 去自訂你最順手的錄音快捷鍵，設定好後，長按該鍵說出廣東話，放開按鍵後，完美的文字就會自動輸入到你當前的視窗！
+   首次啟動時，請依系統提示授權：
+   - Microphone
+   - Accessibility
+   - Input Monitoring
+
+   你可以點擊右上角 Menu Bar 圖示進入 **Settings...** 去自訂你最順手的錄音快捷鍵，設定好後，長按該鍵說出廣東話，放開按鍵後，文字就會自動輸入到你當前的視窗。若要提升專有名詞、香港用詞與 vocab 校正效果，可在 **Settings > API Keys** 輸入 `DASHSCOPE_API_KEY` 啟用 Qwen 潤飾。
 
 ## 🤝 參與貢獻 (Contributing)
 

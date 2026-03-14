@@ -11,7 +11,7 @@ enum PolishError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noAPIKey:
-            return "No API key found. Set QWEN_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY."
+            return "No API key found. Set GEMINI_API_KEY, DASHSCOPE_API_KEY/QWEN_API_KEY, or OPENAI_API_KEY."
         case .networkError(let error):
             return "Network error: \(error.localizedDescription)"
         case .apiError(let message):
@@ -126,6 +126,8 @@ final class TextPolisher {
 
         let polishedText: String
         switch provider {
+        case .gemini:
+            polishedText = try await callGemini(text: rawText)
         case .qwen:
             polishedText = try await callQwen(text: rawText)
         case .openai:
@@ -146,39 +148,60 @@ final class TextPolisher {
     }
 
     /// Resolve the API key for a given provider.
-    /// Environment variable takes precedence; falls back to UserDefaults
-    /// (set via Settings UI → LLM Polish API Keys section).
-    private func resolvedAPIKey(envVar: String, userDefaultsKey: String) -> String? {
-        if let envKey = ProcessInfo.processInfo.environment[envVar],
-           !envKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return envKey.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// Environment variables take precedence; falls back to UserDefaults.
+    private func resolvedAPIKey(envVars: [String], userDefaultsKeys: [String]) -> String? {
+        for envVar in envVars {
+            if let envKey = ProcessInfo.processInfo.environment[envVar],
+               !envKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return envKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
         }
-        if let stored = UserDefaults.standard.string(forKey: userDefaultsKey),
-           !stored.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return stored.trimmingCharacters(in: .whitespacesAndNewlines)
+        for key in userDefaultsKeys {
+            if let stored = UserDefaults.standard.string(forKey: key),
+               !stored.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return stored.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
         }
         return nil
+    }
+
+    private func resolvedQwenAPIKey() -> String? {
+        resolvedAPIKey(
+            envVars: ["DASHSCOPE_API_KEY", "QWEN_API_KEY"],
+            userDefaultsKeys: ["dashscopeAPIKey", "qwenAPIKey"]
+        )
+    }
+
+    private func resolvedGeminiAPIKey() -> String? {
+        resolvedAPIKey(
+            envVars: ["GEMINI_API_KEY"],
+            userDefaultsKeys: ["geminiAPIKey"]
+        )
     }
 
     /// Resolve which provider to use based on config and available API keys.
     /// Checks both environment variables and UserDefaults (Settings UI keys).
     private func resolveProvider() -> AppConfig.PolishProvider {
         switch config.polishProvider {
+        case .gemini:
+            return resolvedGeminiAPIKey() != nil ? .gemini : .none
         case .qwen:
-            return resolvedAPIKey(envVar: "QWEN_API_KEY", userDefaultsKey: "qwenAPIKey") != nil ? .qwen : .none
+            return resolvedQwenAPIKey() != nil ? .qwen : .none
         case .openai:
-            return resolvedAPIKey(envVar: "OPENAI_API_KEY", userDefaultsKey: "openaiAPIKey") != nil ? .openai : .none
+            return resolvedAPIKey(envVars: ["OPENAI_API_KEY"], userDefaultsKeys: ["openaiAPIKey"]) != nil ? .openai : .none
         case .anthropic:
-            return resolvedAPIKey(envVar: "ANTHROPIC_API_KEY", userDefaultsKey: "anthropicAPIKey") != nil ? .anthropic : .none
+            return resolvedAPIKey(envVars: ["ANTHROPIC_API_KEY"], userDefaultsKeys: ["anthropicAPIKey"]) != nil ? .anthropic : .none
         case .none:
             return .none
         case .auto:
-            // Priority: Qwen > OpenAI > Anthropic
-            if resolvedAPIKey(envVar: "QWEN_API_KEY", userDefaultsKey: "qwenAPIKey") != nil {
+            // Priority: Gemini > Qwen > OpenAI > Anthropic
+            if resolvedGeminiAPIKey() != nil {
+                return .gemini
+            } else if resolvedQwenAPIKey() != nil {
                 return .qwen
-            } else if resolvedAPIKey(envVar: "OPENAI_API_KEY", userDefaultsKey: "openaiAPIKey") != nil {
+            } else if resolvedAPIKey(envVars: ["OPENAI_API_KEY"], userDefaultsKeys: ["openaiAPIKey"]) != nil {
                 return .openai
-            } else if resolvedAPIKey(envVar: "ANTHROPIC_API_KEY", userDefaultsKey: "anthropicAPIKey") != nil {
+            } else if resolvedAPIKey(envVars: ["ANTHROPIC_API_KEY"], userDefaultsKeys: ["anthropicAPIKey"]) != nil {
                 return .anthropic
             } else {
                 return .none
@@ -191,10 +214,83 @@ final class TextPolisher {
         return resolveProvider() != .none
     }
 
+    // MARK: - Gemini API
+
+    private func callGemini(text: String) async throws -> String {
+        guard let apiKey = resolvedGeminiAPIKey() else {
+            throw PolishError.noAPIKey
+        }
+
+        let model = ProcessInfo.processInfo.environment["GEMINI_MODEL"] ?? "gemini-2.5-flash"
+        let systemPrompt = generateSystemPrompt()
+
+        let requestBody: [String: Any] = [
+            "system_instruction": [
+                "parts": [
+                    ["text": systemPrompt]
+                ]
+            ],
+            "contents": [
+                [
+                    "role": "user",
+                    "parts": [
+                        ["text": text]
+                    ]
+                ]
+            ],
+            "generationConfig": [
+                "temperature": 0.2,
+                "maxOutputTokens": 1024
+            ]
+        ]
+
+        let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
+        let encodedModel = model.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? model
+        var request = URLRequest(url: URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(encodedModel):generateContent")!)
+        request.httpMethod = "POST"
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = jsonData
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw PolishError.invalidResponse
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let error = errorJson["error"] as? [String: Any],
+               let message = error["message"] as? String {
+                throw PolishError.apiError(message)
+            }
+            throw PolishError.apiError("HTTP \(httpResponse.statusCode)")
+        }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let candidates = json["candidates"] as? [[String: Any]],
+              let firstCandidate = candidates.first,
+              let content = firstCandidate["content"] as? [String: Any],
+              let parts = content["parts"] as? [[String: Any]] else {
+            throw PolishError.invalidResponse
+        }
+
+        let polished = parts
+            .compactMap { $0["text"] as? String }
+            .joined()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !polished.isEmpty else {
+            throw PolishError.emptyResult
+        }
+
+        return polished
+    }
+
     // MARK: - Qwen API (DashScope OpenAI-compatible)
 
     private func callQwen(text: String) async throws -> String {
-        guard let apiKey = resolvedAPIKey(envVar: "QWEN_API_KEY", userDefaultsKey: "qwenAPIKey") else {
+        guard let apiKey = resolvedQwenAPIKey() else {
             throw PolishError.noAPIKey
         }
 
@@ -255,7 +351,7 @@ final class TextPolisher {
     // MARK: - OpenAI API
 
     private func callOpenAI(text: String) async throws -> String {
-        guard let apiKey = resolvedAPIKey(envVar: "OPENAI_API_KEY", userDefaultsKey: "openaiAPIKey") else {
+        guard let apiKey = resolvedAPIKey(envVars: ["OPENAI_API_KEY"], userDefaultsKeys: ["openaiAPIKey"]) else {
             throw PolishError.noAPIKey
         }
 
@@ -314,7 +410,7 @@ final class TextPolisher {
     // MARK: - Anthropic API
 
     private func callAnthropic(text: String) async throws -> String {
-        guard let apiKey = resolvedAPIKey(envVar: "ANTHROPIC_API_KEY", userDefaultsKey: "anthropicAPIKey") else {
+        guard let apiKey = resolvedAPIKey(envVars: ["ANTHROPIC_API_KEY"], userDefaultsKeys: ["anthropicAPIKey"]) else {
             throw PolishError.noAPIKey
         }
 
