@@ -329,6 +329,7 @@ struct VocabularyTab: View {
     var body: some View {
         VStack(spacing: 0) {
             vocabularyTabs
+            vocabularySearchBar
 
             if !starterPackMessage.isEmpty {
                 Text(starterPackMessage)
@@ -339,36 +340,34 @@ struct VocabularyTab: View {
                     .padding(.top, 6)
             }
 
-            List(filteredEntries, id: \.id) { entry in
-                Button {
-                    DispatchQueue.main.async {
-                        selectedID = entry.id
-                        editingEntry = entry
-                    }
-                } label: {
-                    VocabRowView(entry: entry)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        Button(role: .destructive) {
-                            let id = entry.id
-                            if selectedID == id { selectedID = nil }
-                            // Defer past the swipe-reveal CA animation to avoid
-                            // NSConcretePointerArray dealloc-in-CA-transaction crash
-                            // on macOS 26 beta.
-                            Task { @MainActor in
-                                try? await Task.sleep(for: .milliseconds(50))
-                                removeEntry(id: id)
-                            }
-                        } label: {
-                            Label("Delete", systemImage: "trash")
+            ZStack {
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(filteredEntries, id: \.id) { entry in
+                            VocabRowButton(
+                                entry: entry,
+                                isSelected: selectedID == entry.id,
+                                onSelect: {
+                                    selectedID = entry.id
+                                    editingEntry = entry
+                                },
+                                onDelete: {
+                                    let id = entry.id
+                                    if selectedID == id { selectedID = nil }
+                                    Task { @MainActor in
+                                        try? await Task.sleep(for: .milliseconds(50))
+                                        removeEntry(id: id)
+                                    }
+                                }
+                            )
                         }
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                }
+
+                emptyStateOverlay
             }
-            .listStyle(.inset(alternatesRowBackgrounds: true))
-            .searchable(text: $searchText, placement: .toolbar, prompt: "Search terms...")
-            .overlay { emptyStateOverlay }
 
             Divider()
 
@@ -465,6 +464,32 @@ struct VocabularyTab: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
         }
+    }
+
+    private var vocabularySearchBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+
+            TextField("Search terms...", text: $searchText)
+                .textFieldStyle(.plain)
+
+            if !searchText.isEmpty {
+                Button("Clear") {
+                    searchText = ""
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color(NSColor.controlBackgroundColor))
+        )
+        .padding(.horizontal, 12)
+        .padding(.bottom, 4)
     }
 }
 
@@ -621,6 +646,7 @@ private struct VocabBottomBar: View {
 
 struct VocabRowView: View {
     let entry: VocabEntry
+    let isSelected: Bool
 
     var body: some View {
         HStack(alignment: .center) {
@@ -649,7 +675,31 @@ struct VocabRowView: View {
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }
-        .padding(.vertical, 2)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(isSelected ? Color.accentColor.opacity(0.12) : Color(NSColor.controlBackgroundColor))
+        )
+    }
+}
+
+private struct VocabRowButton: View {
+    let entry: VocabEntry
+    let isSelected: Bool
+    let onSelect: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            VocabRowView(entry: entry, isSelected: isSelected)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Edit") { onSelect() }
+            Button("Delete", role: .destructive) { onDelete() }
+        }
     }
 }
 

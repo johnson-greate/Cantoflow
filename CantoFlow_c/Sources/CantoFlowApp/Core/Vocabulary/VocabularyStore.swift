@@ -551,26 +551,37 @@ final class VocabularyStore {
         return prompt
     }
 
-    /// Generate vocabulary section for Claude System Prompt
-    func generateClaudePromptSection() -> String {
+    /// Generate vocabulary section for polish LLM system prompts.
+    func generatePolishPromptSection() -> String {
         var sections: [String] = []
 
-        // Personal vocabulary section
         if !personal.entries.isEmpty {
-            let personalTerms = personal.entries.map { entry -> String in
-                if let notes = entry.notes, !notes.isEmpty {
-                    return "\(entry.term)（\(notes)）"
-                }
-                return entry.term
+            let grouped = Dictionary(grouping: personal.entries, by: \.category)
+            let orderedCategories = VocabCategory.allCases.filter { grouped[$0] != nil }
+            var categoryLines: [String] = []
+
+            for category in orderedCategories {
+                let terms = grouped[category, default: []]
+                    .map { entry -> String in
+                        if let notes = entry.notes, !notes.isEmpty {
+                            return "\(entry.term)（\(notes)）"
+                        }
+                        return entry.term
+                    }
+                    .joined(separator: "、")
+                categoryLines.append("- \(category.displayName)：\(terms)")
             }
+
             sections.append("""
             ---
-            以下是用戶的個人詞庫，請在整理文字時優先使用這些正確用詞：
-            \(personalTerms.joined(separator: "、"))
+            以下是用戶的個人詞庫。這些詞的優先級最高：
+            1. 若粗稿與詞庫詞條相同、近似、同音、近音，優先修正為詞庫內寫法。
+            2. 不要把詞庫中的口語詞改成書面語。
+            3. 若詞庫詞條屬專有名詞，除非明顯錯誤，否則應保留該寫法。
+            \(categoryLines.joined(separator: "\n"))
             """)
         }
 
-        // HK common vocabulary section
         if hkCommonEnabled, let hk = hkCommon {
             var hkTerms: [String] = []
             if hkPlacesEnabled { hkTerms.append(contentsOf: hk.places.prefix(20)) }
@@ -580,12 +591,17 @@ final class VocabularyStore {
             if !hkTerms.isEmpty {
                 sections.append("""
                 ---
-                以下是香港常用詞彙，如果語音識別結果中出現近似詞，請替換為正確寫法：
+                以下是香港常用詞彙，可用作校正參考。當粗稿出現近似詞、誤聽詞、音近詞時，優先考慮以下香港常用寫法：
                 \(hkTerms.joined(separator: "、"))
                 """)
             }
         }
 
         return sections.joined(separator: "\n")
+    }
+
+    /// Backward-compatible alias for older callers.
+    func generateClaudePromptSection() -> String {
+        generatePolishPromptSection()
     }
 }

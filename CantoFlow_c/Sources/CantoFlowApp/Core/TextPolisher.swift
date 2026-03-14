@@ -45,7 +45,7 @@ enum PolishStyle: String, CaseIterable {
 
     var styleDescription: String {
         switch self {
-        case .cantonese: return "保留香港粵語用詞，語氣親切自然。"
+        case .cantonese: return "保留香港粵語口語、常用字同語氣，避免改成書面語。"
         case .formal:    return "中國大陸標準書面語，用詞嚴謹規範。"
         }
     }
@@ -54,17 +54,19 @@ enum PolishStyle: String, CaseIterable {
         switch self {
         case .cantonese:
             return """
-            你是一位精通香港廣東話的資深編輯。請將用戶輸入的語音識別粗文字潤飾為地道、自然的香港口語。
-            1. 保持用戶原意，不要過度改寫
-            2. 修正語音識別錯字（按上下文）
-            3. 去除口頭禪（即係、其實、呀、嗯、嗱咁等）
-            4. 使用地道香港粵語用詞（係、唔、喺、咗、囉、架、喎等），語氣要親切自然
-            5. 整理句式及標點
-            6. 只輸出整理後文字，不要解釋
-            7. 對地名、人名、品牌名等專有名詞採取保守策略：除非非常確定，否則保留原文
-            8. 尤其避免把香港地名錯改為其他地區地名（例如銅鑼灣、維園、旺角、尖沙咀、中環等）
-            9. 若發現無意義的英文音譯拼音（例如將「測試」誤認為 "Thick see"、"Chack see"、"tixy" 等），請根據上下文自動修正為合理的廣東話中文字（如「測試」）。
-            10. 必須以繁體中文輸出，將所有簡體字轉換為繁體字
+            你是一位精通香港廣東話口語的資深編輯。你的工作是把 Whisper 語音轉錄粗稿輕度修正，整理成地道、自然、貼近香港人日常打字的廣東話文字。
+
+            請嚴格遵守以下規則：
+            1. 保持原意，不要擴寫，不要總結，不要自行補充資訊。
+            2. 這是「廣東話口語模式」，必須優先保留口語說法，不可擅自改成正式書面語。
+            3. 例如應優先保留「上落」「攞／拎」「搵日」「埋單／結帳都可但以原句習慣為先」「唔」「喺」「咗」「啦」「囉」「喎」「㗎」等香港常用口語字詞。
+            4. 只修正明顯的語音識別錯字、同音字、近音字、英文音譯拼音，以及不自然的斷句與標點。
+            5. 除非原文明顯有誤，否則不要把口語詞改成書面詞，例如不要隨便把「攞」改成「拿」、「搵日」改成「改天」、「唔要緊」改成「沒關係」、「飲茶」改成「喝茶」。
+            6. 若用戶詞庫或香港常用詞庫中有對應詞，請優先採用詞庫內的寫法；若輸入與詞庫詞條屬同音、近音、常見誤聽，應校正為詞庫詞條。
+            7. 對地名、人名、公司名、產品名等專有名詞採取保守策略：只有在高度確定，或詞庫明確提供對應寫法時，才作修正。
+            8. 尤其避免把香港地名、商場名、屋苑名、公司名錯改成其他詞。
+            9. 必須輸出繁體中文；若輸入出現簡體字，請轉為繁體字。
+            10. 只輸出整理後文字，不要加引號、不要解釋、不要列點、不要輸出「修正後：」。
             """
         case .formal:
             return """
@@ -103,13 +105,30 @@ final class TextPolisher {
         var prompt = style.systemPrompt
 
         if useVocabularyInjection {
-            let vocabSection = VocabularyStore.shared.generateClaudePromptSection()
+            let vocabSection = VocabularyStore.shared.generatePolishPromptSection()
             if !vocabSection.isEmpty {
                 prompt += "\n" + vocabSection
             }
         }
 
         return prompt
+    }
+
+    private func generateUserPrompt(for rawText: String) -> String {
+        let raw = UserDefaults.standard.string(forKey: "polishStyle") ?? PolishStyle.cantonese.rawValue
+        let style = PolishStyle(rawValue: raw) ?? .cantonese
+
+        switch style {
+        case .cantonese:
+            return """
+            以下是 Whisper 轉錄粗稿。請按「香港廣東話口語模式」做最小必要修正，並優先跟從詞庫用字。
+
+            粗稿：
+            \(rawText)
+            """
+        case .formal:
+            return rawText
+        }
     }
 
     /// Polish raw transcribed text using LLM
@@ -234,7 +253,7 @@ final class TextPolisher {
                 [
                     "role": "user",
                     "parts": [
-                        ["text": text]
+                        ["text": generateUserPrompt(for: text)]
                     ]
                 ]
             ],
@@ -305,7 +324,7 @@ final class TextPolisher {
             "enable_thinking": false,   // disable CoT; qwen3.5 thinking mode is ~100s, not suitable for STT polish
             "messages": [
                 ["role": "system", "content": systemPrompt],
-                ["role": "user", "content": text]
+                ["role": "user", "content": generateUserPrompt(for: text)]
             ]
         ]
 
@@ -364,7 +383,7 @@ final class TextPolisher {
             "max_completion_tokens": 1024,
             "messages": [
                 ["role": "system", "content": systemPrompt],
-                ["role": "user", "content": text]
+                ["role": "user", "content": generateUserPrompt(for: text)]
             ]
         ]
 
@@ -428,7 +447,7 @@ final class TextPolisher {
                     "content": [
                         [
                             "type": "text",
-                            "text": text
+                            "text": generateUserPrompt(for: text)
                         ]
                     ]
                 ]
