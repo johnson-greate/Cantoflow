@@ -85,20 +85,11 @@ final class AudioDeviceManager {
             return "No input device"
         }
 
-        var deviceID = target.deviceID
-        let status = AudioUnitSetProperty(
-            engine.inputNode.audioUnit!,
-            kAudioOutputUnitProperty_CurrentDevice,
-            kAudioUnitScope_Global,
-            0,
-            &deviceID,
-            UInt32(MemoryLayout<AudioDeviceID>.size)
-        )
-
-        if status != noErr {
-            print("AudioDeviceManager: failed to switch input device to \(target.name), status=\(status)")
-        }
-
+        // NOTE: Setting kAudioOutputUnitProperty_CurrentDevice via AudioUnitSetProperty on
+        // engine.inputNode.audioUnit corrupts AVAudioEngine's internal state regardless of
+        // when it is called (before/after prepare). Actual hardware device switching is not
+        // implemented here; the engine uses the system default input device.
+        // TODO: implement device switching via system default or AVCaptureSession.
         return target.name
     }
 
