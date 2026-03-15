@@ -8,6 +8,18 @@ echo ""
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_DIR="$ROOT_DIR/app"
+
+# Parse optional flags
+PREBUILT_BINARY=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --prebuilt)
+            PREBUILT_BINARY="$2"
+            shift 2
+            ;;
+        *) shift ;;
+    esac
+done
 THIRD_PARTY_DIR="$ROOT_DIR/third_party"
 WHISPER_DIR="$THIRD_PARTY_DIR/whisper.cpp"
 WHISPER_BIN="$WHISPER_DIR/build/bin/whisper-cli"
@@ -93,11 +105,22 @@ else
     popd >/dev/null
 fi
 
-# 5. Build the Swift Package
-log_step "編譯 CantoFlow"
-cd "$APP_DIR"
-swift build -c release
-echo "✅ 編譯成功！"
+# 5. Build the Swift Package (or use pre-built binary)
+log_step "安裝 CantoFlow binary"
+mkdir -p "$APP_DIR/.build/release"
+if [[ -n "$PREBUILT_BINARY" ]]; then
+    if [[ ! -f "$PREBUILT_BINARY" ]]; then
+        echo "❌ 找不到預編譯 binary: $PREBUILT_BINARY"
+        exit 1
+    fi
+    cp "$PREBUILT_BINARY" "$APP_DIR/.build/release/cantoflow"
+    chmod +x "$APP_DIR/.build/release/cantoflow"
+    echo "✅ 使用預編譯 binary（跳過 Swift 編譯）"
+else
+    cd "$APP_DIR"
+    swift build -c release
+    echo "✅ 編譯成功！"
+fi
 
 # 6. Setup Global Command
 log_step "設定全域捷徑"

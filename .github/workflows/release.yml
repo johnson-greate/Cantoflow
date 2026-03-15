@@ -1,0 +1,122 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── CI: build check on every push / PR ───────────────────────────────────
+  build:
+    name: Build (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - runner: macos-14   # Apple Silicon (M1)
+            arch: arm64
+          - runner: macos-13   # Intel x86_64
+            arch: x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build cantoflow (release)
+        run: |
+          cd app
+          swift build -c release
+          echo "✅ Build succeeded on ${{ matrix.arch }}"
+
+      - name: Smoke test binary
+        run: |
+          ./app/.build/release/cantoflow --help 2>&1 | head -5 || true
+
+      # Upload binary as artifact (used by the release job below)
+      - name: Upload binary artifact
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: cantoflow-${{ matrix.arch }}
+          path: app/.build/release/cantoflow
+          retention-days: 1
+
+  # ── Release: publish binaries when a v* tag is pushed ────────────────────
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download arm64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: cantoflow-arm64
+          path: dist/arm64
+
+      - name: Download x86_64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: cantoflow-x86_64
+          path: dist/x86_64
+
+      - name: Prepare release assets
+        run: |
+          chmod +x dist/arm64/cantoflow dist/x86_64/cantoflow
+          cp dist/arm64/cantoflow  cantoflow-${{ github.ref_name }}-arm64
+          cp dist/x86_64/cantoflow cantoflow-${{ github.ref_name }}-x86_64
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            cantoflow-${{ github.ref_name }}-arm64
+            cantoflow-${{ github.ref_name }}-x86_64
+          body: |
+            ## CantoFlow ${{ github.ref_name }}
+
+            廣東話 AI 語音輸入 — macOS Menu Bar App
+
+            ---
+
+            ## 🚀 快速安裝（推薦）
+
+            ### Apple Silicon（M1/M2/M3/M4）
+            ```bash
+            git clone https://github.com/johnson-greate/Cantoflow.git
+            cd Cantoflow
+            curl -Lo cantoflow-prebuilt \
+              https://github.com/johnson-greate/Cantoflow/releases/download/${{ github.ref_name }}/cantoflow-${{ github.ref_name }}-arm64
+            bash install.sh --prebuilt cantoflow-prebuilt
+            ```
+
+            ### Intel Mac（x86_64）
+            ```bash
+            git clone https://github.com/johnson-greate/Cantoflow.git
+            cd Cantoflow
+            curl -Lo cantoflow-prebuilt \
+              https://github.com/johnson-greate/Cantoflow/releases/download/${{ github.ref_name }}/cantoflow-${{ github.ref_name }}-x86_64
+            bash install.sh --prebuilt cantoflow-prebuilt
+            ```
+
+            > **注意**：`install.sh --prebuilt` 會跳過 Swift 編譯步驟，
+            > 但仍需要編譯 whisper.cpp 及下載語音模型（首次安裝需時 5–15 分鐘）。
+
+            ---
+
+            ## 🛠 從源碼安裝
+            ```bash
+            git clone https://github.com/johnson-greate/Cantoflow.git
+            cd Cantoflow && bash install.sh
+            ```
+
+            需要：macOS 12+、Xcode Command Line Tools（`xcode-select --install`）、Homebrew
+          draft: false
+          prerelease: false
