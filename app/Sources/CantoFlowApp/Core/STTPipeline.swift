@@ -237,9 +237,11 @@ final class STTPipeline {
 
         // Start correction watcher on the final text so user edits can be learned
         // as personal vocabulary. Skipped for terminals (no persistent text field).
+        // Capture immutable copies to satisfy Swift concurrency (finalText is a var).
+        let watchText = finalText
         if let element = watchElement, !isTerminal, config.autoPaste {
             await MainActor.run {
-                CorrectionWatcher.shared.start(element: element, insertedText: finalText)
+                CorrectionWatcher.shared.start(element: element, insertedText: watchText)
             }
         }
 
