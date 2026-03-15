@@ -33,3 +33,10 @@ screenshot/
 
 # Environment Variables
 .env
+
+# Internal documents (not for public release)
+CantoFlow_c/docs/
+CantoFlow_c/handover/
+todolist.txt
+memory.md
+run_cantoflow_daemon.sh
