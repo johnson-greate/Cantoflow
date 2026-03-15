@@ -16,10 +16,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - runner: macos-14   # Apple Silicon (M1)
+          - runner: macos-14   # Apple Silicon (M1/M2/M3/M4)
             arch: arm64
-          - runner: macos-13   # Intel x86_64
-            arch: x86_64
 
     steps:
       - uses: actions/checkout@v4
@@ -61,34 +59,24 @@ jobs:
           name: cantoflow-arm64
           path: dist/arm64
 
-      - name: Download x86_64 binary
-        uses: actions/download-artifact@v4
-        with:
-          name: cantoflow-x86_64
-          path: dist/x86_64
-
       - name: Prepare release assets
         run: |
-          chmod +x dist/arm64/cantoflow dist/x86_64/cantoflow
-          cp dist/arm64/cantoflow  cantoflow-${{ github.ref_name }}-arm64
-          cp dist/x86_64/cantoflow cantoflow-${{ github.ref_name }}-x86_64
+          chmod +x dist/arm64/cantoflow
+          cp dist/arm64/cantoflow cantoflow-${{ github.ref_name }}-arm64
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            cantoflow-${{ github.ref_name }}-arm64
-            cantoflow-${{ github.ref_name }}-x86_64
+          files: cantoflow-${{ github.ref_name }}-arm64
           body: |
             ## CantoFlow ${{ github.ref_name }}
 
-            廣東話 AI 語音輸入 — macOS Menu Bar App
+            廣東話 AI 語音輸入 — macOS Menu Bar App（Apple Silicon）
 
             ---
 
-            ## 🚀 快速安裝（推薦）
+            ## 🚀 快速安裝 — Apple Silicon（M1/M2/M3/M4）
 
-            ### Apple Silicon（M1/M2/M3/M4）
             ```bash
             git clone https://github.com/johnson-greate/Cantoflow.git
             cd Cantoflow
@@ -97,21 +85,12 @@ jobs:
             bash install.sh --prebuilt cantoflow-prebuilt
             ```
 
-            ### Intel Mac（x86_64）
-            ```bash
-            git clone https://github.com/johnson-greate/Cantoflow.git
-            cd Cantoflow
-            curl -Lo cantoflow-prebuilt \
-              https://github.com/johnson-greate/Cantoflow/releases/download/${{ github.ref_name }}/cantoflow-${{ github.ref_name }}-x86_64
-            bash install.sh --prebuilt cantoflow-prebuilt
-            ```
-
-            > **注意**：`install.sh --prebuilt` 會跳過 Swift 編譯步驟，
-            > 但仍需要編譯 whisper.cpp 及下載語音模型（首次安裝需時 5–15 分鐘）。
+            > `install.sh --prebuilt` 跳過 Swift 編譯，但仍需編譯 whisper.cpp 及下載模型（首次約 5–15 分鐘）。
 
             ---
 
-            ## 🛠 從源碼安裝
+            ## 🛠 從源碼安裝（Intel Mac 或進階用戶）
+
             ```bash
             git clone https://github.com/johnson-greate/Cantoflow.git
             cd Cantoflow && bash install.sh
