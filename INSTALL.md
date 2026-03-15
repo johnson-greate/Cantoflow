@@ -25,7 +25,7 @@
 - clone `third_party/whisper.cpp`
 - 編譯 `whisper-cli`
 - 下載 `large-v3-turbo`、`large-v3`、`small` 模型
-- 編譯 `CantoFlow_c`
+- 編譯 `app`
 - 建立 `~/bin/cantoflow`
 - 建立 `~/.cantoflow.env`
 
@@ -60,7 +60,7 @@ cd /path/to/CantoFlow
 然後編譯 Swift app：
 進入 Swift 程式碼所在目錄，並以 Release 模式進行編譯：
 ```bash
-cd CantoFlow_c
+cd app
 swift build -c release
 ```
 

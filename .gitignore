@@ -2,24 +2,23 @@
 pat2-2026.txt
 
 # Local artifacts
-poc/.out/
+poc/
+light_ui/
 
 # Third-party source and models (download/build locally)
 third_party/
 
 # SwiftPM build cache
-light_ui/.build/
 .swift-cache/
 .swiftpm-cache/
 .clang-cache/
-light_ui/cantoflow-light-ui
 CantoFlow.app/
 
 # macOS
 .DS_Store
 
 # Build artifacts
-CantoFlow_c/.build/
+app/.build/
 .out/
 
 # API keys (never commit)
@@ -35,8 +34,12 @@ screenshot/
 .env
 
 # Internal documents (not for public release)
-CantoFlow_c/docs/
-CantoFlow_c/handover/
+app/docs/
+app/handover/
 todolist.txt
 memory.md
 run_cantoflow_daemon.sh
+Canto_Flow_PRD.md
+Canton_Flow_Phase2_PRD.md
+Canton_Flow_Strategic_Update.md
+Canton_Flow_Strategic_Update.pdf

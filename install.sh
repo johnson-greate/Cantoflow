@@ -7,7 +7,7 @@ echo "=========================================="
 echo ""
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP_DIR="$ROOT_DIR/CantoFlow_c"
+APP_DIR="$ROOT_DIR/app"
 THIRD_PARTY_DIR="$ROOT_DIR/third_party"
 WHISPER_DIR="$THIRD_PARTY_DIR/whisper.cpp"
 WHISPER_BIN="$WHISPER_DIR/build/bin/whisper-cli"
