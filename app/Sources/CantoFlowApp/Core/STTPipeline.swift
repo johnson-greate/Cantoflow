@@ -159,10 +159,16 @@ final class STTPipeline {
         var fastIMEReplaceStatus = "not_run"
         var rawAutoPasted = false
 
-        // Detect terminal on the main thread — NSWorkspace.frontmostApplication must
-        // be read from main thread, and we need the answer before Whisper runs because
-        // by then the frontmost app context may have changed.
-        let isTerminal = await MainActor.run { textInserter.isFrontmostAppTerminal() }
+        // Flush any pending correction session from the previous recording,
+        // and capture the focused element + terminal status while the user's
+        // cursor is still on the target field (before STT begins).
+        let (isTerminal, watchElement) = await MainActor.run {
+            CorrectionWatcher.shared.flush()
+            return (
+                textInserter.isFrontmostAppTerminal(),
+                textInserter.captureCurrentElement()
+            )
+        }
 
         // Fast IME: insert raw text first.
         // Skip in terminal apps — Cmd+Z won't undo text and pasted newlines execute as commands.
@@ -226,6 +232,14 @@ final class STTPipeline {
             let insertResult = await textInserter.insertViaClipboard(text: finalText)
             if !insertResult.success {
                 print("Warning: Failed to auto-insert text, copied to clipboard instead")
+            }
+        }
+
+        // Start correction watcher on the final text so user edits can be learned
+        // as personal vocabulary. Skipped for terminals (no persistent text field).
+        if let element = watchElement, !isTerminal, config.autoPaste {
+            await MainActor.run {
+                CorrectionWatcher.shared.start(element: element, insertedText: finalText)
             }
         }
 

@@ -9,8 +9,8 @@ final class NotificationManager {
     /// Show a system notification
     /// - Parameters:
     ///   - message: Notification message
-    ///   - title: Notification title (default: "CantoFlow_c")
-    func notify(_ message: String, title: String = "CantoFlow_c") {
+    ///   - title: Notification title (default: "CantoFlow")
+    func notify(_ message: String, title: String = "CantoFlow") {
         let escaped = message
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")

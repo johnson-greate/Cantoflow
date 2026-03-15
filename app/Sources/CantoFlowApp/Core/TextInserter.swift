@@ -88,6 +88,12 @@ final class TextInserter {
         return sendCmdZ()
     }
 
+    /// Capture the currently focused AX element for use by CorrectionWatcher.
+    /// Call immediately after text insertion while focus is still on the target field.
+    func captureCurrentElement() -> AXUIElement? {
+        getFocusedElement()
+    }
+
     /// Returns true if the frontmost app is a terminal emulator.
     func isFrontmostAppTerminal() -> Bool {
         guard let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else {
