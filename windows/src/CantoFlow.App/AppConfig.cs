@@ -23,18 +23,21 @@ public class AppConfig
     public string WhisperCli => Path.Combine(AppData, "whisper-cli.exe");
 
     /// <summary>
-    /// Auto-derived OpenVINO encoder path (e.g. ggml-large-v3-turbo-encoder-openvino.xml).
-    /// Created by: python convert-whisper-to-openvino.py --model large-v3-turbo
-    /// If this file exists, WhisperRunner adds --openvino-encode-device GPU automatically.
+    /// Finds any *-encoder-openvino.xml in the models directory.
+    /// The encoder is generated from the base model name (e.g. ggml-large-v3-turbo),
+    /// independent of quantization suffix (q5_0, q8_0, etc.).
+    /// Returns empty string if not found.
     /// </summary>
     public string WhisperOpenVinoEncoder
     {
         get
         {
-            var model = WhisperModel;
-            var dir   = Path.GetDirectoryName(model) ?? "";
-            var stem  = Path.GetFileNameWithoutExtension(model); // ggml-large-v3-turbo
-            return Path.Combine(dir, stem + "-encoder-openvino.xml");
+            var modelsDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "CantoFlow", "models");
+            if (!Directory.Exists(modelsDir)) return "";
+            return Directory.EnumerateFiles(modelsDir, "*-encoder-openvino.xml")
+                            .FirstOrDefault() ?? "";
         }
     }
 
