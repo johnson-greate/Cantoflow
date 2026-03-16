@@ -115,10 +115,10 @@ public sealed class RecordingOverlay : Form
     private void RepositionToScreen()
     {
         var workArea = Screen.PrimaryScreen?.WorkingArea ?? Screen.AllScreens[0].WorkingArea;
-        // Horizontally centered, vertically at ~40% (above center, like macOS menu bar capsule)
+        // Horizontally centered, 24px above the taskbar (bottom edge, like macOS capsule near Dock)
         Location = new Point(
-            workArea.Left + (workArea.Width  - W) / 2,
-            workArea.Top  + (workArea.Height - H) * 2 / 5);
+            workArea.Left + (workArea.Width - W) / 2,
+            workArea.Bottom - H - 24);
     }
 
     private void AnimateLevelBar(object? sender, EventArgs e)

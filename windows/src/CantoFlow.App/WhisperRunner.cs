@@ -4,6 +4,8 @@ namespace CantoFlow.App;
 
 /// <summary>
 /// Runs whisper-cli.exe and parses output.
+/// Uses ProcessStartInfo.ArgumentList (not raw Arguments string) so that
+/// Chinese characters in --prompt are passed as proper UTF-8 on Windows.
 /// Mirrors macOS WhisperRunner.swift.
 /// </summary>
 public class WhisperRunner(AppConfig config)
@@ -15,22 +17,33 @@ public class WhisperRunner(AppConfig config)
         if (!File.Exists(config.WhisperModel))
             throw new FileNotFoundException($"Whisper model not found at {config.WhisperModel}");
 
-        var promptArg = string.IsNullOrWhiteSpace(whisperPrompt)
-            ? "" : $" --prompt \"{whisperPrompt.Replace("\"", "\\\"")}\"";
-
-        var proc = new System.Diagnostics.Process
+        var startInfo = new System.Diagnostics.ProcessStartInfo
         {
-            StartInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = config.WhisperCli,
-                Arguments = $"-m \"{config.WhisperModel}\" -f \"{wavPath}\" -otxt -l yue --no-timestamps{promptArg}",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            }
+            FileName               = config.WhisperCli,
+            RedirectStandardOutput = true,
+            RedirectStandardError  = true,
+            UseShellExecute        = false,
+            CreateNoWindow         = true,
+            // ArgumentList avoids Windows ANSI encoding corruption of CJK chars
+            // (raw Arguments string mangles UTF-8 Chinese in --prompt on Windows)
         };
 
+        startInfo.ArgumentList.Add("-m");
+        startInfo.ArgumentList.Add(config.WhisperModel);
+        startInfo.ArgumentList.Add("-f");
+        startInfo.ArgumentList.Add(wavPath);
+        startInfo.ArgumentList.Add("-otxt");
+        startInfo.ArgumentList.Add("-l");
+        startInfo.ArgumentList.Add("yue");  // Cantonese
+        startInfo.ArgumentList.Add("--no-timestamps");
+
+        if (!string.IsNullOrWhiteSpace(whisperPrompt))
+        {
+            startInfo.ArgumentList.Add("--prompt");
+            startInfo.ArgumentList.Add(whisperPrompt);
+        }
+
+        var proc = new System.Diagnostics.Process { StartInfo = startInfo };
         proc.Start();
         await proc.WaitForExitAsync(ct);
 
@@ -40,7 +53,6 @@ public class WhisperRunner(AppConfig config)
             throw new InvalidOperationException($"whisper-cli exited {proc.ExitCode}: {stderr}");
         }
 
-        // whisper-cli saves output as <inputfile>.txt by default
         var txtFile = wavPath + ".txt";
         return File.Exists(txtFile)
             ? (await File.ReadAllTextAsync(txtFile, ct)).Trim()
