@@ -38,6 +38,13 @@ public class WhisperRunner(AppConfig config)
         startInfo.ArgumentList.Add("--best-of"); startInfo.ArgumentList.Add("1"); // greedy — no beam search
         startInfo.ArgumentList.Add("--beam-size"); startInfo.ArgumentList.Add("1");
 
+        // Auto-enable OpenVINO GPU encoding if user ran convert-whisper-to-openvino.py
+        if (File.Exists(config.WhisperOpenVinoEncoder))
+        {
+            startInfo.ArgumentList.Add("--openvino-encode-device");
+            startInfo.ArgumentList.Add("GPU");
+        }
+
         if (!string.IsNullOrWhiteSpace(whisperPrompt))
         {
             startInfo.ArgumentList.Add("--prompt");
