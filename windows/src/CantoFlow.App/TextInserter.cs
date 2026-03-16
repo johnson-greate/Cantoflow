@@ -34,18 +34,24 @@ public static class TextInserter
 
     /// <summary>
     /// Copy text to clipboard and simulate Ctrl+V paste.
-    /// Restores the previous clipboard content after paste.
+    /// Retries up to 5 times with 50ms delay if clipboard is locked by another app.
     /// </summary>
     public static void InsertViaClipboard(string text)
     {
-        var previous = Clipboard.GetText();
-        Clipboard.SetText(text);
-        SendCtrlV();
-        Task.Delay(100).ContinueWith(_ =>
+        for (int i = 0; i < 5; i++)
         {
-            if (!string.IsNullOrEmpty(previous))
-                Clipboard.SetText(previous);
-        });
+            try
+            {
+                Clipboard.SetText(text);
+                break;
+            }
+            catch (System.Runtime.InteropServices.ExternalException)
+            {
+                if (i == 4) return; // give up after 5 attempts
+                Thread.Sleep(50);
+            }
+        }
+        SendCtrlV();
     }
 
     /// <summary>Undo last paste (Ctrl+Z), wait 50ms, then paste new text.</summary>
