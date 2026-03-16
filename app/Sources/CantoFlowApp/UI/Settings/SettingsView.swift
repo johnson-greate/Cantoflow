@@ -865,7 +865,7 @@ struct APIKeysTab: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Text("API keys are stored in app preferences immediately. Testing uses the first available key in this order: Gemini, DashScope/Qwen, OpenAI.")
+                Text("API keys are saved to ~/.cantoflow.env immediately and take effect on the next recording — no restart required. Testing uses the first available key in this order: Gemini, DashScope/Qwen, OpenAI.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -873,6 +873,11 @@ struct APIKeysTab: View {
             .padding(16)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .onAppear { loadFromEnvFile() }
+        .onChange(of: geminiAPIKey)    { newVal in syncKeyToEnvFile(envVar: "GEMINI_API_KEY",    value: newVal) }
+        .onChange(of: dashscopeAPIKey) { newVal in syncKeyToEnvFile(envVar: "DASHSCOPE_API_KEY", value: newVal) }
+        .onChange(of: qwenAPIKey)      { newVal in syncKeyToEnvFile(envVar: "QWEN_API_KEY",      value: newVal) }
+        .onChange(of: openaiAPIKey)    { newVal in syncKeyToEnvFile(envVar: "OPENAI_API_KEY",    value: newVal) }
     }
 
     @ViewBuilder
@@ -918,6 +923,59 @@ struct APIKeysTab: View {
                 .buttonStyle(.plain)
             }
         }
+    }
+
+    // MARK: - ~/.cantoflow.env sync
+
+    private var cantoflowEnvPath: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cantoflow.env")
+    }
+
+    /// On appear: read ~/.cantoflow.env and populate @AppStorage fields so the UI
+    /// reflects whatever the process actually loaded at launch.
+    private func loadFromEnvFile() {
+        guard let content = try? String(contentsOf: cantoflowEnvPath, encoding: .utf8) else { return }
+        let parsed = parseEnvFile(content)
+        if let v = parsed["GEMINI_API_KEY"]    { geminiAPIKey    = v }
+        if let v = parsed["DASHSCOPE_API_KEY"] { dashscopeAPIKey = v }
+        if let v = parsed["QWEN_API_KEY"]      { qwenAPIKey      = v }
+        if let v = parsed["OPENAI_API_KEY"]    { openaiAPIKey    = v }
+    }
+
+    /// Write a single env var into ~/.cantoflow.env, preserving all other lines.
+    private func syncKeyToEnvFile(envVar: String, value: String) {
+        let path = cantoflowEnvPath
+        var content = (try? String(contentsOf: path, encoding: .utf8)) ?? "# CantoFlow API 密鑰設定\n"
+        var lines = content.components(separatedBy: "\n")
+        let newLine = "\(envVar)=\"\(value)\""
+        var found = false
+        lines = lines.map { line -> String in
+            guard line.trimmingCharacters(in: .whitespaces).hasPrefix(envVar + "=") else { return line }
+            found = true
+            return newLine
+        }
+        if !found { lines.append(newLine) }
+        content = lines.joined(separator: "\n")
+        try? content.write(to: path, atomically: true, encoding: .utf8)
+        NotificationCenter.default.post(name: .cantoFlowAPIKeyDidChange, object: nil)
+    }
+
+    private func parseEnvFile(_ content: String) -> [String: String] {
+        var result: [String: String] = [:]
+        for line in content.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty, !trimmed.hasPrefix("#"),
+                  let eqRange = trimmed.range(of: "=") else { continue }
+            let key = String(trimmed[trimmed.startIndex..<eqRange.lowerBound])
+            var val  = String(trimmed[eqRange.upperBound...])
+            if val.count >= 2,
+               (val.hasPrefix("\"") && val.hasSuffix("\"")) ||
+               (val.hasPrefix("'")  && val.hasSuffix("'")) {
+                val = String(val.dropFirst().dropLast())
+            }
+            result[key] = val
+        }
+        return result
     }
 
     private func maskedAPIKey(_ value: String) -> String {

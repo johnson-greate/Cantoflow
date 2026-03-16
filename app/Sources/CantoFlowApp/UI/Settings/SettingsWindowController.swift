@@ -11,11 +11,18 @@ import SwiftUI
 /// The Settings scene in CantoFlowApp.body is kept only to satisfy SwiftUI's
 /// requirement that every App have at least one scene. The actual window shown to
 /// the user is the one created here.
+extension Notification.Name {
+    static let cantoFlowAPIKeyDidChange = Notification.Name("CantoFlowAPIKeyDidChange")
+}
+
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     static let shared = SettingsWindowController()
 
     /// Set by MenuBarController so the Settings window has access to the pipeline if needed.
     weak var pipeline: STTPipeline?
+
+    /// Tracks whether any API key was changed since the settings window was last opened.
+    private var apiKeysChanged = false
 
     // Persistent window that is NEVER deallocated.
     //
@@ -52,14 +59,45 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         return win
     }()
 
-    private override init() {}
+    private override init() {
+        super.init()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAPIKeyChange),
+            name: .cantoFlowAPIKeyDidChange,
+            object: nil
+        )
+    }
 
     func show() {
+        apiKeysChanged = false
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    @objc private func handleAPIKeyChange() {
+        apiKeysChanged = true
+    }
+
     // MARK: - NSWindowDelegate
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard apiKeysChanged else { return true }
+        apiKeysChanged = false
+
+        let alert = NSAlert()
+        alert.messageText = "Restart CantoFlow to apply changes"
+        alert.informativeText = "API key changes have been saved to ~/.cantoflow.env but will only take effect after restarting CantoFlow."
+        alert.addButton(withTitle: "Restart Now")
+        alert.addButton(withTitle: "Later")
+        alert.alertStyle = .informational
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            NSApp.terminate(nil)
+        }
+        return true
+    }
 
     func windowWillClose(_ notification: Notification) {
         // Intentionally empty: the window stays alive (hidden) after close.

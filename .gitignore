@@ -12,7 +12,7 @@ third_party/
 .swift-cache/
 .swiftpm-cache/
 .clang-cache/
-CantoFlow.app/
+app/CantoFlow.app/
 
 # macOS
 .DS_Store

@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CantoFlow.App/CantoFlow.App.csproj" />
+    <Project Path="src/CantoFlow.Core/CantoFlow.Core.csproj" />
+    <Project Path="src/CantoFlow.Server/CantoFlow.Server.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CantoFlow.Core.Tests/CantoFlow.Core.Tests.csproj" />
+    <Project Path="tests/CantoFlow.Server.Tests/CantoFlow.Server.Tests.csproj" />
+  </Folder>
+</Solution>
