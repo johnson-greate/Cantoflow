@@ -1,12 +1,116 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace CantoFlow.Core;
+
+// ── Personal vocabulary types ─────────────────────────────────────────────────
+
+public enum VocabCategory
+{
+    [JsonPropertyName("place")]    Place,
+    [JsonPropertyName("action")]   Action,
+    [JsonPropertyName("slang")]    Slang,
+    [JsonPropertyName("food")]     Food,
+    [JsonPropertyName("company")]  Company,
+    [JsonPropertyName("tech")]     Tech,
+    [JsonPropertyName("other")]    Other
+}
+
+public static class VocabCategoryExtensions
+{
+    public static string DisplayName(this VocabCategory c) => c switch
+    {
+        VocabCategory.Place   => "地名",
+        VocabCategory.Action  => "動作",
+        VocabCategory.Slang   => "口頭禪",
+        VocabCategory.Food    => "食物",
+        VocabCategory.Company => "公司",
+        VocabCategory.Tech    => "技術",
+        _                     => "其他"
+    };
+}
+
+public class PersonalVocabEntry
+{
+    public string       Id       { get; set; } = Guid.NewGuid().ToString();
+    public string       Term     { get; set; } = "";
+    public VocabCategory Category { get; set; } = VocabCategory.Other;
+}
+
+/// <summary>
+/// Manages personal vocabulary stored in %APPDATA%\CantoFlow\personal_vocab.json.
+/// Thread-safe for single-threaded UI use (WinForms main thread).
+/// </summary>
+public class PersonalVocabStore
+{
+    private static readonly string FilePath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "CantoFlow", "personal_vocab.json");
+
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        WriteIndented = true,
+        Converters    = { new JsonStringEnumConverter() }
+    };
+
+    private List<PersonalVocabEntry> _entries;
+
+    public PersonalVocabStore() => _entries = Load();
+
+    public IReadOnlyList<PersonalVocabEntry> Entries => _entries;
+
+    public void Add(PersonalVocabEntry entry)
+    {
+        _entries.Add(entry);
+        Save();
+    }
+
+    public void Remove(string id)
+    {
+        _entries.RemoveAll(e => e.Id == id);
+        Save();
+    }
+
+    public void Update(PersonalVocabEntry updated)
+    {
+        var idx = _entries.FindIndex(e => e.Id == updated.Id);
+        if (idx >= 0) { _entries[idx] = updated; Save(); }
+    }
+
+    public IEnumerable<string> AllTerms => _entries.Select(e => e.Term);
+
+    // ── Persistence ──────────────────────────────────────────────────────────
+
+    private static List<PersonalVocabEntry> Load()
+    {
+        try
+        {
+            if (!File.Exists(FilePath)) return [];
+            var json = File.ReadAllText(FilePath);
+            return JsonSerializer.Deserialize<List<PersonalVocabEntry>>(json, JsonOpts) ?? [];
+        }
+        catch { return []; }
+    }
+
+    private void Save()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
+            File.WriteAllText(FilePath, JsonSerializer.Serialize(_entries, JsonOpts));
+        }
+        catch { /* non-fatal */ }
+    }
+}
 
 /// <summary>
 /// Bundled HK vocabulary for Whisper prompt injection and LLM polish hints.
-/// Ported from macOS VocabularyStore.swift (read-only starter packs only;
-/// personal vocabulary UI is a future task).
+/// Ported from macOS VocabularyStore.swift.
 /// </summary>
 public static class VocabularyStore
 {
+    /// <summary>Shared personal vocabulary instance (load once, live for app lifetime).</summary>
+    public static readonly PersonalVocabStore Personal = new();
     // ── Starter Pack 1: places / actions / slang / food ──────────────────────
 
     private static readonly string[] Pack1Places =
@@ -85,14 +189,59 @@ public static class VocabularyStore
     // ── Public API ────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// All starter-pack terms combined (packs 1 + 2 + HK common slang/food).
+    /// All terms: starter packs + personal vocabulary.
     /// Used to build the Whisper --prompt and LLM vocabulary section.
     /// </summary>
     public static IEnumerable<string> AllTerms =>
         Pack1Places.Concat(Pack1Actions).Concat(Pack1Slang).Concat(Pack1Food)
         .Concat(Pack2Malls).Concat(Pack2Estates).Concat(Pack2Roads).Concat(Pack2Office)
         .Concat(HKSlang).Concat(HKFood)
+        .Concat(Personal.AllTerms)
         .Distinct();
+
+    /// <summary>
+    /// Imports Starter Pack 1 (places / actions / slang / food) into personal vocabulary.
+    /// Returns number of new terms added (skips duplicates).
+    /// </summary>
+    public static int ImportStarterPack1()
+    {
+        var existing = new HashSet<string>(Personal.Entries.Select(e => e.Term), StringComparer.Ordinal);
+        int added = 0;
+
+        void AddGroup(string[] terms, VocabCategory cat)
+        {
+            foreach (var t in terms)
+                if (existing.Add(t)) { Personal.Add(new PersonalVocabEntry { Term = t, Category = cat }); added++; }
+        }
+
+        AddGroup(Pack1Places,  VocabCategory.Place);
+        AddGroup(Pack1Actions, VocabCategory.Action);
+        AddGroup(Pack1Slang,   VocabCategory.Slang);
+        AddGroup(Pack1Food,    VocabCategory.Food);
+        return added;
+    }
+
+    /// <summary>
+    /// Imports Starter Pack 2 (malls / estates / roads / office) into personal vocabulary.
+    /// Returns number of new terms added.
+    /// </summary>
+    public static int ImportStarterPack2()
+    {
+        var existing = new HashSet<string>(Personal.Entries.Select(e => e.Term), StringComparer.Ordinal);
+        int added = 0;
+
+        void AddGroup(string[] terms, VocabCategory cat)
+        {
+            foreach (var t in terms)
+                if (existing.Add(t)) { Personal.Add(new PersonalVocabEntry { Term = t, Category = cat }); added++; }
+        }
+
+        AddGroup(Pack2Malls,   VocabCategory.Place);
+        AddGroup(Pack2Estates, VocabCategory.Place);
+        AddGroup(Pack2Roads,   VocabCategory.Place);
+        AddGroup(Pack2Office,  VocabCategory.Action);
+        return added;
+    }
 
     /// <summary>
     /// Builds the Whisper --prompt string (max ~500 chars).

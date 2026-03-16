@@ -1,11 +1,24 @@
 namespace CantoFlow.App;
 
 /// <summary>
-/// Build timestamp embedded at compile time via MSBuild.
+/// Build version derived from the exe's last-write timestamp at runtime.
 /// Format matches macOS AppVersion.swift: yyyyMMdd.HHmm
+/// No build script required.
 /// </summary>
 public static class BuildVersion
 {
-    // This constant is rewritten by the pre-build script (see Directory.Build.targets)
-    public const string Version = "00000000.0000";
+    public static string Version
+    {
+        get
+        {
+            try
+            {
+                var exe = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
+                if (exe != null)
+                    return File.GetLastWriteTime(exe).ToString("yyyyMMdd.HHmm");
+            }
+            catch { }
+            return "00000000.0000";
+        }
+    }
 }
