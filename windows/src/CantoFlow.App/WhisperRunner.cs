@@ -35,8 +35,6 @@ public class WhisperRunner(AppConfig config)
         startInfo.ArgumentList.Add("-l");  startInfo.ArgumentList.Add("yue");  // Cantonese
         startInfo.ArgumentList.Add("--no-timestamps");
         startInfo.ArgumentList.Add("-t");  startInfo.ArgumentList.Add(threads);
-        startInfo.ArgumentList.Add("--best-of"); startInfo.ArgumentList.Add("1"); // greedy — no beam search
-        startInfo.ArgumentList.Add("--beam-size"); startInfo.ArgumentList.Add("1");
 
         // Auto-enable OpenVINO GPU encoding if user ran convert-whisper-to-openvino.py
         if (File.Exists(config.WhisperOpenVinoEncoder))
