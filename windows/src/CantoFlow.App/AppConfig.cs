@@ -12,12 +12,12 @@ public class AppConfig
     public string PolishStyle { get; set; } = "cantonese";
     public bool ServerEnabled { get; set; } = true;
     public int ServerPort { get; set; } = 8765;
-    public string HotkeyDescription { get; set; } = "F15";
+    public string HotkeyDescription { get; set; } = "F9";
 
-    public string OutDir => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CantoFlow", ".out");
-    public string WhisperCli => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CantoFlow", "whisper", "whisper-cli.exe");
-    public string WhisperModel => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CantoFlow", "whisper", "models", "ggml-large-v3-turbo.bin");
+    private static string AppData => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CantoFlow");
+
+    public string OutDir   => Path.Combine(AppData, ".out");
+    public string WhisperCli   => Path.Combine(AppData, "whisper-cli.exe");
+    public string WhisperModel => Path.Combine(AppData, "models", "ggml-base.bin");
 }

@@ -47,6 +47,8 @@ internal static class Program
         tray.SettingsRequested += () => new SettingsForm(config, fileValues).ShowDialog();
         tray.QuitRequested += () => { webApp?.StopAsync(); Application.Exit(); };
 
+        using var ptt = new PushToTalkController(config, polisher, logger);
+
         Application.Run(); // WinForms message loop
     }
 }
