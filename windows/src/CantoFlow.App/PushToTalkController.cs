@@ -24,8 +24,11 @@ public sealed class PushToTalkController : NativeWindow, IDisposable
     private readonly WhisperRunner   _whisper;
     private readonly SynchronizationContext _ui;
 
-    private bool    _recording;
-    private string? _currentWavPath;
+    private bool     _recording;
+    private bool     _processing;                    // true while whisper/polish running
+    private DateTime _lastToggle = DateTime.MinValue;
+    private const int DebounceMs = 600;              // ignore key-repeat within 600ms
+    private string?  _currentWavPath;
 
     public PushToTalkController(AppConfig config, TextPolisher polisher, TelemetryLogger telemetry)
     {
@@ -49,6 +52,12 @@ public sealed class PushToTalkController : NativeWindow, IDisposable
 
     private async Task ToggleAsync()
     {
+        if (_processing) return;  // whisper/polish still running, ignore
+
+        var now = DateTime.UtcNow;
+        if ((now - _lastToggle).TotalMilliseconds < DebounceMs) return;  // key-repeat
+        _lastToggle = now;
+
         if (!_recording)
         {
             _recording = true;
@@ -63,7 +72,9 @@ public sealed class PushToTalkController : NativeWindow, IDisposable
             if (_currentWavPath is { } wavPath)
             {
                 _currentWavPath = null;
-                await ProcessAsync(wavPath);
+                _processing = true;
+                try   { await ProcessAsync(wavPath); }
+                finally { _processing = false; }
             }
         }
     }
