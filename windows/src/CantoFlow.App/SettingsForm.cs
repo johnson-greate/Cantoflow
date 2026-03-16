@@ -23,10 +23,11 @@ public partial class SettingsForm : Form
 
     private void LoadValues()
     {
-        _geminiKey.Text   = _fileValues.GetValueOrDefault("GEMINI_API_KEY", "");
-        _dashscopeKey.Text = _fileValues.GetValueOrDefault("DASHSCOPE_API_KEY", "");
-        _qwenKey.Text     = _fileValues.GetValueOrDefault("QWEN_API_KEY", "");
-        _openaiKey.Text   = _fileValues.GetValueOrDefault("OPENAI_API_KEY", "");
+        var fresh = EnvFileManager.LoadDefaults();
+        _geminiKey.Text    = fresh.GetValueOrDefault("GEMINI_API_KEY", "");
+        _dashscopeKey.Text = fresh.GetValueOrDefault("DASHSCOPE_API_KEY", "");
+        _qwenKey.Text      = fresh.GetValueOrDefault("QWEN_API_KEY", "");
+        _openaiKey.Text    = fresh.GetValueOrDefault("OPENAI_API_KEY", "");
     }
 
     private void SaveValues()
