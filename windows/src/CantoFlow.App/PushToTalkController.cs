@@ -15,7 +15,7 @@ public sealed class PushToTalkController : NativeWindow, IDisposable
 
     private const int WM_HOTKEY = 0x0312;
     private const int HotkeyId  = 9001;
-    private const uint VK_F9    = 0x78;
+    private const uint VK_F12   = 0x7B;
 
     private readonly AppConfig       _config;
     private readonly TextPolisher    _polisher;
@@ -40,7 +40,7 @@ public sealed class PushToTalkController : NativeWindow, IDisposable
 
         // Create a message-only window (no visible UI) to receive WM_HOTKEY
         CreateHandle(new CreateParams { Parent = new IntPtr(-3) }); // HWND_MESSAGE
-        RegisterHotKey(Handle, HotkeyId, 0, VK_F9);
+        RegisterHotKey(Handle, HotkeyId, 0, VK_F12);
     }
 
     protected override void WndProc(ref Message m)
@@ -81,10 +81,13 @@ public sealed class PushToTalkController : NativeWindow, IDisposable
 
     private async Task ProcessAsync(string wavPath)
     {
+        using var cts = new CancellationTokenSource();
+        var ct = cts.Token;
         try
         {
-            var sttStart = DateTimeOffset.UtcNow;
-            var rawText  = await _whisper.TranscribeAsync(wavPath);
+            var sttStart      = DateTimeOffset.UtcNow;
+            var whisperPrompt = VocabularyStore.GenerateWhisperPrompt();
+            var rawText       = await _whisper.TranscribeAsync(wavPath, whisperPrompt, ct);
             var sttMs    = (int)(DateTimeOffset.UtcNow - sttStart).TotalMilliseconds;
 
             var finalText    = rawText;
@@ -96,7 +99,8 @@ public sealed class PushToTalkController : NativeWindow, IDisposable
             {
                 try
                 {
-                    var r    = await _polisher.PolishAsync(rawText);
+                    var vocabSection = VocabularyStore.GeneratePolishPromptSection();
+                    var r    = await _polisher.PolishAsync(rawText, vocabularySection: vocabSection, ct: ct);
                     finalText    = r.Text;
                     polishMs     = r.DurationMs;
                     provider     = r.Provider.ToString().ToLower();

@@ -12,7 +12,7 @@ public class AppConfig
     public string PolishStyle { get; set; } = "cantonese";
     public bool ServerEnabled { get; set; } = true;
     public int ServerPort { get; set; } = 8765;
-    public string HotkeyDescription { get; set; } = "F9";
+    public string HotkeyDescription { get; set; } = "F12";
 
     private static string AppData => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CantoFlow");

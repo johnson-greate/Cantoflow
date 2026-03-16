@@ -8,19 +8,22 @@ namespace CantoFlow.App;
 /// </summary>
 public class WhisperRunner(AppConfig config)
 {
-    public async Task<string> TranscribeAsync(string wavPath, CancellationToken ct = default)
+    public async Task<string> TranscribeAsync(string wavPath, string? whisperPrompt = null, CancellationToken ct = default)
     {
         if (!File.Exists(config.WhisperCli))
             throw new FileNotFoundException($"whisper-cli.exe not found at {config.WhisperCli}");
         if (!File.Exists(config.WhisperModel))
             throw new FileNotFoundException($"Whisper model not found at {config.WhisperModel}");
 
+        var promptArg = string.IsNullOrWhiteSpace(whisperPrompt)
+            ? "" : $" --prompt \"{whisperPrompt.Replace("\"", "\\\"")}\"";
+
         var proc = new System.Diagnostics.Process
         {
             StartInfo = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = config.WhisperCli,
-                Arguments = $"-m \"{config.WhisperModel}\" -f \"{wavPath}\" -otxt -l zh --no-timestamps",
+                Arguments = $"-m \"{config.WhisperModel}\" -f \"{wavPath}\" -otxt -l zh --no-timestamps{promptArg}",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
