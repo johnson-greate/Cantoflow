@@ -15,7 +15,6 @@ public sealed class PushToTalkController : NativeWindow, IDisposable
 
     private const int WM_HOTKEY = 0x0312;
     private const int HotkeyId  = 9001;
-    private const uint VK_F12   = 0x7B;
 
     private readonly AppConfig       _config;
     private readonly TextPolisher    _polisher;
@@ -40,7 +39,7 @@ public sealed class PushToTalkController : NativeWindow, IDisposable
 
         // Create a message-only window (no visible UI) to receive WM_HOTKEY
         CreateHandle(new CreateParams { Parent = new IntPtr(-3) }); // HWND_MESSAGE
-        RegisterHotKey(Handle, HotkeyId, 0, VK_F12);
+        RegisterHotKey(Handle, HotkeyId, config.Hotkey.Modifiers, config.Hotkey.Vk);
     }
 
     protected override void WndProc(ref Message m)

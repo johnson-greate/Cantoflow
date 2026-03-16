@@ -13,8 +13,10 @@ internal static class Program
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
-        var config = new AppConfig();
         var fileValues = EnvFileManager.LoadDefaults();
+        var config = new AppConfig();
+        if (fileValues.TryGetValue("CANTOFLOW_HOTKEY", out var hk) && !string.IsNullOrWhiteSpace(hk))
+            config.HotkeyRaw = hk;
         var polisher = new TextPolisher(config.PolishProvider, fileValues);
         var outDir = config.OutDir;
         Directory.CreateDirectory(outDir);

@@ -7,6 +7,10 @@ public partial class SettingsForm : Form
     private readonly AppConfig _config;
     private readonly Dictionary<string, string> _fileValues;
 
+    // Hotkey recorder
+    private readonly TextBox _hotkeyBox  = new() { ReadOnly = true, BackColor = SystemColors.Window, Cursor = Cursors.Hand };
+    private HotkeyConfig?    _pendingHotkey;
+
     // API key textboxes (plain text — user types new key or leaves blank to keep existing)
     private readonly TextBox _geminiKey    = new() { UseSystemPasswordChar = false };
     private readonly TextBox _dashscopeKey = new() { UseSystemPasswordChar = false };
@@ -32,6 +36,20 @@ public partial class SettingsForm : Form
 
     private void LoadValues()
     {
+        _hotkeyBox.Text = _config.Hotkey.Display;
+        _hotkeyBox.GotFocus  += (_, _) => _hotkeyBox.Text = "Press a key combination...";
+        _hotkeyBox.LostFocus += (_, _) => { if (_pendingHotkey == null) _hotkeyBox.Text = _config.Hotkey.Display; };
+        _hotkeyBox.KeyDown   += (_, e) =>
+        {
+            e.SuppressKeyPress = true;
+            var key = e.KeyData & Keys.KeyCode;
+            // Ignore bare modifiers
+            if (key == Keys.ControlKey || key == Keys.ShiftKey || key == Keys.Menu || key == Keys.LWin || key == Keys.RWin)
+                return;
+            _pendingHotkey    = HotkeyConfig.FromKeyDown(e.KeyData);
+            _hotkeyBox.Text   = _pendingHotkey.Display;
+        };
+
         var fresh = EnvFileManager.LoadDefaults();
         _geminiKey.Text    = MaskKey(fresh.GetValueOrDefault("GEMINI_API_KEY",    ""));
         _dashscopeKey.Text = MaskKey(fresh.GetValueOrDefault("DASHSCOPE_API_KEY", ""));
@@ -53,6 +71,9 @@ public partial class SettingsForm : Form
 
     private void SaveValues()
     {
+        if (_pendingHotkey != null)
+            EnvFileManager.UpdateEnvFile(EnvFileManager.DefaultPath, "CANTOFLOW_HOTKEY", _pendingHotkey.Display);
+
         void SaveIfChanged(TextBox tb, string envKey)
         {
             var existing = (string)(tb.Tag ?? "");
@@ -91,10 +112,18 @@ public partial class SettingsForm : Form
         generalLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 60));
 
         generalLayout.Controls.Add(new Label { Text = "Press-to-Talk Key", Anchor = AnchorStyles.Right, AutoSize = true });
-        generalLayout.Controls.Add(new Label { Text = _config.HotkeyDescription, Anchor = AnchorStyles.Left, AutoSize = true, Font = new Font(Font, FontStyle.Bold) });
+        _hotkeyBox.Dock = DockStyle.Fill;
+        generalLayout.Controls.Add(_hotkeyBox);
+
+        generalLayout.Controls.Add(new Label { Text = "", AutoSize = true });
+        generalLayout.Controls.Add(new Label
+        {
+            Text = "Click the box above, then press any key combination (e.g. Ctrl+Shift+Space, Alt+F8).",
+            ForeColor = Color.Gray, Font = new Font(Font.FontFamily, 7.5f), AutoSize = true, MaximumSize = new Size(300, 0)
+        });
 
         generalLayout.Controls.Add(new Label { Text = "Mode", Anchor = AnchorStyles.Right, AutoSize = true });
-        generalLayout.Controls.Add(new Label { Text = "Toggle (press once to start, press again to stop)", Anchor = AnchorStyles.Left, AutoSize = true });
+        generalLayout.Controls.Add(new Label { Text = "Toggle: press once to start, press again to stop", Anchor = AnchorStyles.Left, AutoSize = true });
 
         generalLayout.Controls.Add(new Label { Text = "Polish Style", Anchor = AnchorStyles.Right, AutoSize = true });
         generalLayout.Controls.Add(new Label { Text = _config.PolishStyle, Anchor = AnchorStyles.Left, AutoSize = true });
