@@ -15,15 +15,12 @@ public class WhisperRunner(AppConfig config)
         if (!File.Exists(config.WhisperModel))
             throw new FileNotFoundException($"Whisper model not found at {config.WhisperModel}");
 
-        var outputPrefix = Path.Combine(config.OutDir,
-            "raw_" + TelemetryLogger.FileTimestamp());
-
         var proc = new System.Diagnostics.Process
         {
             StartInfo = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = config.WhisperCli,
-                Arguments = $"-m \"{config.WhisperModel}\" -f \"{wavPath}\" -of \"{outputPrefix}\" -otxt -l zh --no-timestamps",
+                Arguments = $"-m \"{config.WhisperModel}\" -f \"{wavPath}\" -otxt -l zh --no-timestamps",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -40,7 +37,8 @@ public class WhisperRunner(AppConfig config)
             throw new InvalidOperationException($"whisper-cli exited {proc.ExitCode}: {stderr}");
         }
 
-        var txtFile = outputPrefix + ".txt";
+        // whisper-cli saves output as <inputfile>.txt by default
+        var txtFile = wavPath + ".txt";
         return File.Exists(txtFile)
             ? (await File.ReadAllTextAsync(txtFile, ct)).Trim()
             : throw new FileNotFoundException("whisper-cli did not produce output .txt file");
