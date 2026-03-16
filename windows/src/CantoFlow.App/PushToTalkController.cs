@@ -5,8 +5,9 @@ namespace CantoFlow.App;
 
 /// <summary>
 /// Hidden message-only window that handles WM_HOTKEY for push-to-talk (toggle mode).
-/// Press F9 to start recording; press F9 again to stop and transcribe.
+/// Press hotkey to start recording; press again to stop and transcribe.
 /// Mirrors macOS PushToTalkManager.swift.
+/// Shows RecordingOverlay during recording/transcription and updates the tray menu.
 /// </summary>
 public sealed class PushToTalkController : NativeWindow, IDisposable
 {
@@ -16,31 +17,44 @@ public sealed class PushToTalkController : NativeWindow, IDisposable
     private const int WM_HOTKEY = 0x0312;
     private const int HotkeyId  = 9001;
 
-    private readonly AppConfig       _config;
-    private readonly TextPolisher    _polisher;
-    private readonly TelemetryLogger _telemetry;
-    private readonly AudioCapture    _audio  = new();
-    private readonly WhisperRunner   _whisper;
+    private readonly AppConfig            _config;
+    private readonly TextPolisher         _polisher;
+    private readonly TelemetryLogger      _telemetry;
+    private readonly TrayIconController   _tray;
+    private readonly AudioCapture         _audio    = new();
+    private readonly WhisperRunner        _whisper;
+    private readonly RecordingOverlay     _overlay;
     private readonly SynchronizationContext _ui;
 
     private bool     _recording;
-    private bool     _processing;                    // true while whisper/polish running
+    private bool     _processing;
     private DateTime _lastToggle = DateTime.MinValue;
-    private const int DebounceMs = 600;              // ignore key-repeat within 600ms
+    private const int DebounceMs = 600;
     private string?  _currentWavPath;
 
-    public PushToTalkController(AppConfig config, TextPolisher polisher, TelemetryLogger telemetry)
+    public PushToTalkController(AppConfig config, TextPolisher polisher,
+                                TelemetryLogger telemetry, TrayIconController tray)
     {
         _config    = config;
         _polisher  = polisher;
         _telemetry = telemetry;
+        _tray      = tray;
         _whisper   = new WhisperRunner(config);
         _ui        = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+
+        // Recording overlay (created on UI thread)
+        _overlay = new RecordingOverlay();
+
+        // Forward microphone level to overlay
+        _audio.LevelChanged += level => _overlay.SetLevel(level);
 
         // Create a message-only window (no visible UI) to receive WM_HOTKEY
         CreateHandle(new CreateParams { Parent = new IntPtr(-3) }); // HWND_MESSAGE
         RegisterHotKey(Handle, HotkeyId, config.Hotkey.Modifiers, config.Hotkey.Vk);
     }
+
+    /// <summary>Can be called from the tray menu "Start/Stop Recording" item.</summary>
+    public void TriggerToggle() => _ = ToggleAsync();
 
     protected override void WndProc(ref Message m)
     {
@@ -51,23 +65,34 @@ public sealed class PushToTalkController : NativeWindow, IDisposable
 
     private async Task ToggleAsync()
     {
-        if (_processing) return;  // whisper/polish still running, ignore
+        if (_processing) return;
 
         var now = DateTime.UtcNow;
-        if ((now - _lastToggle).TotalMilliseconds < DebounceMs) return;  // key-repeat
+        if ((now - _lastToggle).TotalMilliseconds < DebounceMs) return;
         _lastToggle = now;
 
         if (!_recording)
         {
-            _recording = true;
+            _recording      = true;
             _currentWavPath = Path.Combine(_config.OutDir,
                 $"ptt_{TelemetryLogger.FileTimestamp()}.wav");
             _audio.StartRecording(_currentWavPath);
+
+            _tray.UpdateRecordingState(true);
+            _ui.Post(_ =>
+            {
+                _overlay.SetRecording();
+                _overlay.Show();
+            }, null);
         }
         else
         {
             _recording = false;
             _audio.StopRecording();
+
+            _ui.Post(_ => _overlay.SetTranscribing(), null);
+            _tray.UpdateRecordingState(false);
+
             if (_currentWavPath is { } wavPath)
             {
                 _currentWavPath = null;
@@ -75,6 +100,8 @@ public sealed class PushToTalkController : NativeWindow, IDisposable
                 try   { await ProcessAsync(wavPath); }
                 finally { _processing = false; }
             }
+
+            _ui.Post(_ => _overlay.Hide(), null);
         }
     }
 
@@ -87,7 +114,7 @@ public sealed class PushToTalkController : NativeWindow, IDisposable
             var sttStart      = DateTimeOffset.UtcNow;
             var whisperPrompt = VocabularyStore.GenerateWhisperPrompt();
             var rawText       = await _whisper.TranscribeAsync(wavPath, whisperPrompt, ct);
-            var sttMs    = (int)(DateTimeOffset.UtcNow - sttStart).TotalMilliseconds;
+            var sttMs         = (int)(DateTimeOffset.UtcNow - sttStart).TotalMilliseconds;
 
             var finalText    = rawText;
             var polishMs     = 0;
@@ -118,6 +145,9 @@ public sealed class PushToTalkController : NativeWindow, IDisposable
                 LatencyMs    = new LatencyMs { Stt = sttMs, Polish = polishMs }
             });
 
+            // Update tray with last-result stats
+            _tray.UpdateLastResult(finalText, finalText.Length, sttMs, polishMs);
+
             if (!string.IsNullOrWhiteSpace(finalText))
                 _ui.Post(_ => TextInserter.InsertViaClipboard(finalText), null);
         }
@@ -133,6 +163,7 @@ public sealed class PushToTalkController : NativeWindow, IDisposable
     {
         UnregisterHotKey(Handle, HotkeyId);
         _audio.Dispose();
+        _overlay.Dispose();
         DestroyHandle();
     }
 }
