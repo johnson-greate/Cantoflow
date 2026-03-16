@@ -1,5 +1,7 @@
 # CantoFlow Windows Setup Guide
-_Verified working: 2026-03-16, Calvin's machine: Core i5-12th gen + Intel Iris Xe_
+_Verified working: 2026-03-16_
+
+> **關於 whisper-cli：** 本指南使用預編譯的 Vulkan 版 whisper-cli。如需從源碼重新編譯（例如 whisper.cpp 重大更新），請參閱 [windows-vulkan-build-reference.md](windows-vulkan-build-reference.md)。普通安裝無需閱讀該文章。
 
 ---
 
@@ -16,8 +18,7 @@ _Verified working: 2026-03-16, Calvin's machine: Core i5-12th gen + Intel Iris X
 ## 前置條件
 
 - Windows 10/11 x64
-- Admin PowerShell
-- Internet 連線（下載 ~8GB 總量）
+- Internet 連線（下載約 600MB）
 
 ---
 
@@ -41,16 +42,14 @@ dotnet run --project src\CantoFlow.App
 
 ---
 
-## Part 2：安裝 whisper-cli（基本版，CPU only）
+## Part 2：安裝 whisper-cli（Vulkan GPU 加速版）
 
-### 2.1 下載 whisper-cli binary
+### 2.1 下載預編譯 Vulkan binary
 
-去 https://github.com/ggml-org/whisper.cpp/releases/latest
-
-下載 **`whisper-bin-x64.zip`**（3–4MB，唔係 BLAS，唔係 cublas）
+從 CantoFlow GitHub Releases 下載 **`whisper-vulkan-win-x64.zip`**
 
 ### 2.2 複製到 CantoFlow 資料夾
-解壓，將所有文件複製到：
+解壓，將所有文件（`whisper-cli.exe` + 5 個 `.dll`）複製到：
 ```
 %APPDATA%\CantoFlow\
 ```
