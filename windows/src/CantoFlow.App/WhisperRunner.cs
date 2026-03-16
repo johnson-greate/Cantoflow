@@ -23,7 +23,7 @@ public class WhisperRunner(AppConfig config)
             StartInfo = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = config.WhisperCli,
-                Arguments = $"-m \"{config.WhisperModel}\" -f \"{wavPath}\" -otxt -l zh --no-timestamps{promptArg}",
+                Arguments = $"-m \"{config.WhisperModel}\" -f \"{wavPath}\" -otxt -l yue --no-timestamps{promptArg}",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
