@@ -527,7 +527,7 @@ Expected: `ggml_vulkan: 0 = Intel(R) Arc(TM) A770`, encode time < 3000ms
 - [ ] Publish server binary:
 ```bash
 # On dev machine or CI:
-cd /Volumes/JTDev/CantoFlow/windows
+cd /path/to/CantoFlow/windows
 dotnet publish src/CantoFlow.Server -c Release -r linux-x64 --self-contained \
   -o /tmp/cantoflow-server-publish
 # scp to server
@@ -882,7 +882,7 @@ if config.useServer, let url = config.serverURL {
 
 - [ ] Build:
 ```bash
-cd /Volumes/JTDev/CantoFlow/app
+cd /path/to/CantoFlow/app
 swift build
 ```
 Expected: `Build complete!`

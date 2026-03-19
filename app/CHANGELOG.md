@@ -21,7 +21,7 @@
 - **Overlay position drift**: Panel no longer moves down with each recording
   - Added `targetFrame` to store correct position
   - `showWithAnimation()` now recalculates position each time
-- **Menu cleanup**: Renamed "Quit CantoFlow_c" to "Quit CantoFlow"
+- **Menu cleanup**: Renamed the quit item to "Quit CantoFlow"
 
 ### Known Issues
 - Vocabulary settings uses simplified alert-based UI (SwiftUI rewrite planned for Phase 3)
@@ -100,7 +100,7 @@ Sources/CantoFlowApp/
 
 ### Build
 ```bash
-cd CantoFlow_c
+cd CantoFlow/app
 swift build
 ```
 

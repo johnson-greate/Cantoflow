@@ -7,13 +7,13 @@
     <key>CFBundleExecutable</key>
     <string>cantoflow</string>
     <key>CFBundleIdentifier</key>
-    <string>com.cantoflow.c</string>
+    <string>com.cantoflow</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>CantoFlow_c</string>
+    <string>CantoFlow</string>
     <key>CFBundleDisplayName</key>
-    <string>CantoFlow_c</string>
+    <string>CantoFlow</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>

@@ -32,6 +32,46 @@ log_step() {
     echo "▶ $1"
 }
 
+build_release_binary() {
+    local build_output
+
+    if build_output="$(cd "$APP_DIR" && swift build -c release 2>&1)"; then
+        printf '%s\n' "$build_output"
+        return 0
+    fi
+
+    printf '%s\n' "$build_output"
+    if [[ "$build_output" == *"PCH was compiled with module cache path"* ]] || [[ "$build_output" == *"missing required module 'SwiftShims'"* ]]; then
+        echo "⚠️ 偵測到 Swift module cache 與目前 repo 路徑不一致，正在 clean 後重建..."
+        (
+            cd "$APP_DIR"
+            swift package clean
+            rm -rf .build
+            swift build -c release
+        )
+        return 0
+    fi
+
+    return 1
+}
+
+build_whisper_binary() {
+    cmake -B "$WHISPER_DIR/build" -S "$WHISPER_DIR"
+    cmake --build "$WHISPER_DIR/build" -j 8
+}
+
+whisper_binary_usable() {
+    [[ -x "$WHISPER_BIN" ]] || return 1
+
+    local whisper_output
+    if whisper_output="$("$WHISPER_BIN" --help 2>&1 >/dev/null)"; then
+        return 0
+    fi
+
+    printf '%s\n' "$whisper_output"
+    return 1
+}
+
 have_all_models() {
     [[ -f "$MODEL_DIR/ggml-large-v3-turbo.bin" ]] &&
     [[ -f "$MODEL_DIR/ggml-large-v3.bin" ]] &&
@@ -79,10 +119,10 @@ else
     echo "✅ 發現現有 whisper.cpp repo，跳過 clone。"
 fi
 
-if [[ ! -x "$WHISPER_BIN" ]]; then
+if ! whisper_binary_usable; then
     echo "🔨 正在編譯 whisper.cpp..."
-    cmake -B "$WHISPER_DIR/build" -S "$WHISPER_DIR"
-    cmake --build "$WHISPER_DIR/build" -j 8
+    rm -rf "$WHISPER_DIR/build"
+    build_whisper_binary
 else
     echo "✅ whisper-cli 已存在，跳過編譯。"
 fi
@@ -113,14 +153,20 @@ if [[ -n "$PREBUILT_BINARY" ]]; then
         echo "❌ 找不到預編譯 binary: $PREBUILT_BINARY"
         exit 1
     fi
-    cp "$PREBUILT_BINARY" "$APP_DIR/.build/release/cantoflow"
-    chmod +x "$APP_DIR/.build/release/cantoflow"
+    TARGET_BINARY="$APP_DIR/.build/release/cantoflow"
+    PREBUILT_REALPATH="$(cd "$(dirname "$PREBUILT_BINARY")" && pwd)/$(basename "$PREBUILT_BINARY")"
+    TARGET_REALPATH="$(cd "$(dirname "$TARGET_BINARY")" && pwd)/$(basename "$TARGET_BINARY")"
+    if [[ "$PREBUILT_REALPATH" != "$TARGET_REALPATH" ]]; then
+        cp "$PREBUILT_BINARY" "$TARGET_BINARY"
+    fi
+    chmod +x "$TARGET_BINARY"
     echo "✅ 使用預編譯 binary（跳過 Swift 編譯）"
 else
-    cd "$APP_DIR"
-    swift build -c release
+    build_release_binary
     echo "✅ 編譯成功！"
 fi
+
+cd "$ROOT_DIR"
 
 # 6. Setup Global Command
 log_step "設定全域捷徑"
@@ -128,7 +174,7 @@ BIN_DIR="$HOME/bin"
 mkdir -p "$BIN_DIR"
 
 # Ensure we get the absolute path to the run script
-SCRIPT_PATH="$(pwd)/scripts/run.sh"
+SCRIPT_PATH="$APP_DIR/scripts/run.sh"
 
 ln -sf "$SCRIPT_PATH" "$BIN_DIR/cantoflow"
 chmod +x "$SCRIPT_PATH"

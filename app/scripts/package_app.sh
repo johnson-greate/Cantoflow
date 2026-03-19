@@ -3,8 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "${SCRIPT_DIR}")"
-APP_NAME="CantoFlow_c"
-BUNDLE_ID="com.cantoflow.c"
+APP_NAME="CantoFlow"
 
 cd "${PROJECT_DIR}"
 

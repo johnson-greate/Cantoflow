@@ -1,4 +1,4 @@
-# CantoFlow_c — Claude 開發筆記
+# CantoFlow — Claude 開發筆記
 
 ## Autonomy Settings
 - Do not ask for confirmation on file edits
@@ -17,7 +17,7 @@
 ## Build & Run
 
 ```bash
-cd /Users/johnson_tam/Documents/CantoFlow/CantoFlow_c
+cd /path/to/CantoFlow/app
 swift build
 # 必須先 Quit 舊的 app，才能啟動新 binary
 .build/debug/cantoflow
@@ -25,7 +25,7 @@ swift build
 
 **Project root**（whisper.cpp 等第三方依賴）在：
 ```
-/Users/johnson_tam/Documents/CantoFlow/
+/path/to/CantoFlow
 ```
 
 ---

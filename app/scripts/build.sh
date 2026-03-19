@@ -6,7 +6,7 @@ PROJECT_DIR="$(dirname "${SCRIPT_DIR}")"
 
 cd "${PROJECT_DIR}"
 
-echo "Building CantoFlow_c..."
+echo "Building CantoFlow..."
 swift build -c release
 
 echo ""

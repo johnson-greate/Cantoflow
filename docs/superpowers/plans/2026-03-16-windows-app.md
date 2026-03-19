@@ -36,7 +36,7 @@ Expected: `8.x.x`
 - [ ] **Step 2: Scaffold solution and projects**
 
 ```bash
-cd /Volumes/JTDev/CantoFlow/windows
+cd /path/to/CantoFlow/windows
 dotnet new sln -n CantoFlow.Windows
 
 # Core (portable class library)
@@ -84,7 +84,7 @@ rm -f tests/CantoFlow.Server.Tests/UnitTest1.cs
 - [ ] **Step 4: Verify solution builds**
 
 ```bash
-cd /Volumes/JTDev/CantoFlow/windows
+cd /path/to/CantoFlow/windows
 dotnet build
 ```
 Expected: `Build succeeded. 0 Error(s)`
@@ -197,7 +197,7 @@ public class EnvFileManagerTests
 - [ ] **Step 2: Run tests to confirm they fail**
 
 ```bash
-cd /Volumes/JTDev/CantoFlow/windows
+cd /path/to/CantoFlow/windows
 dotnet test tests/CantoFlow.Core.Tests/ --filter "EnvFileManager"
 ```
 Expected: compilation error (type not found)
@@ -1486,7 +1486,7 @@ public partial class SettingsForm : Form
 - [ ] **Step 11: Verify solution builds (including App project)**
 
 ```bash
-cd /Volumes/JTDev/CantoFlow/windows
+cd /path/to/CantoFlow/windows
 dotnet build
 ```
 Expected: `Build succeeded` (App project may warn about Windows-only APIs on macOS — that is expected)

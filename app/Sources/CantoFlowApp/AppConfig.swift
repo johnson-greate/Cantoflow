@@ -95,7 +95,7 @@ struct AppConfig {
         }
 
         func looksLikeProjectRoot(_ url: URL) -> Bool {
-            fm.fileExists(atPath: url.appendingPathComponent("CantoFlow_c/Package.swift").path) ||
+            fm.fileExists(atPath: url.appendingPathComponent("app/Package.swift").path) ||
             fm.fileExists(atPath: url.appendingPathComponent("third_party/whisper.cpp").path)
         }
 
@@ -104,7 +104,7 @@ struct AppConfig {
             return cwd
         }
 
-        // Check parent directory (if running from CantoFlow_c)
+        // Check parent directory (if running from the app subdirectory)
         let parent = cwd.deletingLastPathComponent()
         if looksLikeProjectRoot(parent) {
             return parent

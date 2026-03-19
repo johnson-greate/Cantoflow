@@ -3,10 +3,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "${SCRIPT_DIR}")"
-APP_NAME="CantoFlow_c"
+APP_NAME="CantoFlow"
+LEGACY_APP_NAME="CantoFlow_c"
 
 APP_SOURCE="${PROJECT_DIR}/.build/${APP_NAME}.app"
 APP_DEST="/Applications/${APP_NAME}.app"
+LEGACY_APP_DEST="/Applications/${LEGACY_APP_NAME}.app"
 
 # Build and package if not already done
 if [[ ! -d "${APP_SOURCE}" ]]; then
@@ -20,13 +22,18 @@ if [[ -d "${APP_DEST}" ]]; then
     rm -rf "${APP_DEST}"
 fi
 
+if [[ -d "${LEGACY_APP_DEST}" ]]; then
+    echo "Removing legacy ${LEGACY_APP_NAME}.app..."
+    rm -rf "${LEGACY_APP_DEST}"
+fi
+
 echo "Installing ${APP_NAME}.app to /Applications..."
 cp -r "${APP_SOURCE}" "${APP_DEST}"
 
 echo ""
 echo "Installation complete!"
 echo ""
-echo "To run CantoFlow_c:"
+echo "To run CantoFlow:"
 echo "  open /Applications/${APP_NAME}.app --args --project-root $(dirname "${PROJECT_DIR}")"
 echo ""
 echo "Or from command line:"

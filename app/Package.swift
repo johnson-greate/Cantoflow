@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "CantoFlow_c",
+    name: "CantoFlow",
     platforms: [
         .macOS(.v13)
     ],

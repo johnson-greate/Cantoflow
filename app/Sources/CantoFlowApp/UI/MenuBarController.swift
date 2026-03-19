@@ -7,7 +7,7 @@ enum UIState: String {
     case processing
 }
 
-/// Menu bar controller for CantoFlow_c
+/// Menu bar controller for CantoFlow
 final class MenuBarController: NSObject, PushToTalkDelegate {
     private let config: AppConfig
     private let pipeline: STTPipeline

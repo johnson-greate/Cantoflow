@@ -3,12 +3,14 @@ import Foundation
 final class LaunchAtLoginManager {
     static let shared = LaunchAtLoginManager()
 
-    private let label = "com.cantoflow.c.launchagent"
+    private let label = "com.cantoflow.launchagent"
+    private let legacyLabel = "com.cantoflow.c.launchagent"
 
     private init() {}
 
     var isEnabled: Bool {
-        FileManager.default.fileExists(atPath: launchAgentURL.path)
+        let fm = FileManager.default
+        return fm.fileExists(atPath: launchAgentURL.path) || fm.fileExists(atPath: legacyLaunchAgentURL.path)
     }
 
     func setEnabled(_ enabled: Bool) throws {
@@ -25,9 +27,16 @@ final class LaunchAtLoginManager {
             .appendingPathComponent("\(label).plist")
     }
 
+    private var legacyLaunchAgentURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
+            .appendingPathComponent("\(legacyLabel).plist")
+    }
+
     private func installLaunchAgent() throws {
         let agentDir = launchAgentURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: agentDir, withIntermediateDirectories: true)
+        try cleanupLegacyLaunchAgent()
 
         let runScriptURL = try resolveRunScriptURL()
         let plist: [String: Any] = [
@@ -52,6 +61,7 @@ final class LaunchAtLoginManager {
         if FileManager.default.fileExists(atPath: launchAgentURL.path) {
             try FileManager.default.removeItem(at: launchAgentURL)
         }
+        try cleanupLegacyLaunchAgent()
     }
 
     private func resolveRunScriptURL() throws -> URL {
@@ -59,7 +69,7 @@ final class LaunchAtLoginManager {
         let appDir = executableURL
             .deletingLastPathComponent()   // release
             .deletingLastPathComponent()   // .build
-            .deletingLastPathComponent()   // CantoFlow_c
+            .deletingLastPathComponent()   // app bundle directory
         let scriptURL = appDir.appendingPathComponent("scripts/run.sh")
 
         guard FileManager.default.isExecutableFile(atPath: scriptURL.path) else {
@@ -92,6 +102,13 @@ final class LaunchAtLoginManager {
                 code: Int(process.terminationStatus),
                 userInfo: [NSLocalizedDescriptionKey: output?.isEmpty == false ? output! : "launchctl failed"]
             )
+        }
+    }
+
+    private func cleanupLegacyLaunchAgent() throws {
+        try runLaunchCtl(arguments: ["bootout", "gui/\(getuid())", legacyLaunchAgentURL.path], allowFailure: true)
+        if FileManager.default.fileExists(atPath: legacyLaunchAgentURL.path) {
+            try FileManager.default.removeItem(at: legacyLaunchAgentURL)
         }
     }
 }
