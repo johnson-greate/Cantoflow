@@ -132,24 +132,40 @@ final class WhisperRunner {
         let metalEnabled = metalSupported && config.useMetalGPU
 
         // Run whisper-cli with model fallback
-        var runResult = try await runWhisper(
-            whisperPath: whisperPath,
-            modelPath: modelPath,
-            audioURL: audioURL,
-            outputPrefix: outputPrefix,
-            metalEnabled: metalEnabled
-        )
+        var runResult: RunResult? = nil
+        do {
+            runResult = try await runWhisper(
+                whisperPath: whisperPath,
+                modelPath: modelPath,
+                audioURL: audioURL,
+                outputPrefix: outputPrefix,
+                metalEnabled: metalEnabled
+            )
+        } catch WhisperError.transcriptionFailed(let code, _) where code == 6 && metalEnabled {
+            // Exit 6 = SIGABRT inside ggml — Metal GPU crash (e.g. after abrupt volume unmount).
+            // Invalidate cached Metal support and retry with CPU.
+            print("[WhisperRunner] Metal crash (exit 6) — falling back to CPU for this and future runs")
+            WhisperRunner._metalSupported = false
+            runResult = try await runWhisper(
+                whisperPath: whisperPath,
+                modelPath: modelPath,
+                audioURL: audioURL,
+                outputPrefix: outputPrefix,
+                metalEnabled: false
+            )
+        }
 
         // If turbo model failed, try fallback to large-v3
         if runResult == nil && modelPath == config.turboModelPath {
             let fallbackModel = config.largeModelPath
             if fm.fileExists(atPath: fallbackModel.path) {
+                let cpuFallback = WhisperRunner._metalSupported == false
                 runResult = try await runWhisper(
                     whisperPath: whisperPath,
                     modelPath: fallbackModel,
                     audioURL: audioURL,
                     outputPrefix: outputPrefix,
-                    metalEnabled: metalEnabled
+                    metalEnabled: metalEnabled && !cpuFallback
                 )
             }
         }

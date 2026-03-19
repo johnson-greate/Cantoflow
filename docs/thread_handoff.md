@@ -1,56 +1,142 @@
 # CantoFlow — Thread Handoff
 
-_Date: 2026-03-16_
+_Date: 2026-03-19_
 
-## What Was Investigated
+---
 
-User reported: after deleting the Qwen API key in Settings UI, LLM Polish was still running.
+## 事故摘要
 
-## Root Cause Found
+**2026-03-18 18:06** — JTDev 外置硬碟在 CantoFlow 運行期間被強制卸載（force unmount）。CantoFlow binary 本身在 JTDev 上，kernel 讀取記憶體映射頁面失敗，觸發 **SIGBUS**，進程 PID 80401 被殺死。
 
-`run.sh` sources `~/.cantoflow.env` at launch and exports all keys as environment variables into the `cantoflow` process. The process environment is immutable after launch.
-
-Settings UI (`APIKeysTab`) was only writing to `UserDefaults` (`@AppStorage`). `TextPolisher.resolvedAPIKey()` checks **env vars first**, then UserDefaults — so clearing UserDefaults had no effect while the env var was still live in the process.
-
-`~/.cantoflow.env` had:
+Crash report：
 ```
-QWEN_API_KEY="sk-53df5fadf0e14803ab6a0f91a6b6f821"   ← never cleared
+/Users/johnsontam/Library/Logs/DiagnosticReports/cantoflow-2026-03-18-180653.ips
+ktriageinfo: "Object has no pager because the backing vnode was force unmounted"
 ```
 
-## Fix Implemented
+重啟後出現兩個連鎖問題，共修了三個 bug。
 
-**File**: `app/Sources/CantoFlowApp/UI/Settings/SettingsView.swift`
-**Struct**: `APIKeysTab`
+---
 
-Three new private methods added:
-- `loadFromEnvFile()` — reads `~/.cantoflow.env` on `.onAppear`, syncs values into `@AppStorage` so UI shows what's actually active
-- `syncKeyToEnvFile(envVar:value:)` — on `.onChange` of any key field, writes the new value to `~/.cantoflow.env` immediately
-- `parseEnvFile(_:)` — parses `KEY="value"` / `KEY=value` format
+## Bug 1 — STT 完全失效（exit 6 / Metal GPU crash）
 
-`.onAppear` and four `.onChange` modifiers added to the ScrollView.
+### 症狀
+每次錄音後 menu bar 顯示：
+```
+Error: STT failed: Transcription failed (exit 6):
+WARNING: Using native backtrace. Set GGML_BACKTRACE_LLDB...
+```
+`.out/` 有 WAV 錄音，但無對應 `raw_*.txt`，telemetry 無條目。
 
-Caption text updated: `"API keys are saved to ~/.cantoflow.env immediately and take effect on the next recording — no restart required."`
+### 根本原因
+硬碟強制斷線時，whisper-cli 子進程（正在使用 Metal GPU）被強殺，Metal GPU 指令佇列未能正常清理。之後每次 CantoFlow 啟動 whisper-cli 子進程，ggml Metal 初始化時 SIGABRT（exit 6）。
 
-> Note: Caption says "no restart required" because env file is updated immediately — but the **running process** still holds the old env var until restart. The next launch of run.sh will source the updated file. This is a known limitation documented in `current_status.md`.
+從 terminal 直接執行 whisper-cli 正常，因為 shell session 與 app 的 Metal context 有別。
 
-## Debugging Method Used
+### 修復
+**File**: `app/Sources/CantoFlowApp/Core/WhisperRunner.swift`
 
-1. `tail -1 .out/telemetry.jsonl` — confirmed `provider=qwen` after key deletion
-2. `defaults find qwenAPIKey` — confirmed UserDefaults was empty but `qwenAPIKey` legacy alias still had value
-3. `ps -p <pid> -E | grep QWEN` — confirmed env var live in process
-4. `cat ~/.cantoflow.env` — found stale key
-5. `cat app/scripts/run.sh` — found `source ~/.cantoflow.env` as root cause
+在 `transcribe()` 加入 Metal crash fallback：
+```swift
+} catch WhisperError.transcriptionFailed(let code, _) where code == 6 && metalEnabled {
+    // Exit 6 = SIGABRT inside ggml — Metal GPU crash
+    WhisperRunner._metalSupported = false  // 此後用 CPU
+    runResult = try await runWhisper(..., metalEnabled: false)
+}
+```
+- Metal crash 時靜默切換 CPU 重試
+- 同時失效 Metal cache，本次進程後續錄音均用 CPU
+- 重啟 app 後會重新嘗試 Metal（自動恢復）
 
-## What Still Needs Attention
+---
 
-1. **Caption accuracy**: "no restart required" is slightly misleading — the env file is updated immediately, but the running process still uses the old env var until restarted. Consider revising to: _"Changes are saved immediately and take effect after restarting the app."_
+## Bug 2 — 識別完全亂碼（Prompt 包含壞例子）
 
-2. **`GEMINI_API_KEY` not in default `~/.cantoflow.env`**: If a user adds a Gemini key via Settings UI, `syncKeyToEnvFile` will append it to the file correctly. But if `~/.cantoflow.env` is recreated from scratch, Gemini key won't be included in the template. Consider updating the default template in `run.sh` or a setup script.
+### 症狀
+STT 恢復後，識別輸出：`"TACSI TACSI CRCR、上不上頭"`（完全亂碼）
 
-3. **`anthropicAPIKey` gap**: Anthropic key has no Settings UI field. It can only be set via `~/.cantoflow.env` directly or env var. Consider adding a field in "Other Providers" section alongside OpenAI.
+### 根本原因
+`VocabularyStore.generateWhisperPrompt()` 的 prompt 包含：
+```
+例如「測試」絕對不要寫成「Thick see」
+```
+Whisper 的 initial_prompt 直接影響輸出分佈。Prompt 入面有 `Thick see` 呢個英文音譯例子，whisper 反而**學到**可以用英文音譯拼音輸出，說「測試測試」變成 `TACSI TACSI`。
 
-4. **Restart UX**: There is no visual indicator in the app that a restart is needed after key changes. A banner or menu bar indicator could improve the UX.
+此 bug 在硬碟斷線前已存在，但被 Metal crash 掩蓋，今次才發現。
 
-## Files Changed This Session
+### 修復
+**File**: `app/Sources/CantoFlowApp/Core/Vocabulary/VocabularyStore.swift`
 
-- `app/Sources/CantoFlowApp/UI/Settings/SettingsView.swift` — API key sync logic
+```swift
+// 修改前
+var prompt = "這是一段香港廣東話錄音，請直接輸出繁體中文字，絕對不要輸出任何英文音譯拼音，例如「測試」絕對不要寫成「Thick see」。"
+
+// 修改後
+var prompt = "以下係廣東話句子，必須以繁體中文輸出。"
+```
+
+---
+
+## Bug 3 — Menu Bar 無法分辨 GPU / CPU 模式
+
+### 症狀
+Menu Bar 只顯示 `上次: 17字 · STT 4.6s · 共 6.4s`，無法得知當次用 Metal GPU 定 CPU fallback。
+
+### 修復
+三個文件修改：
+
+**`STTPipeline.swift`** — `PipelineResult` 加 `metalEnabled: Bool` 欄位：
+```swift
+struct PipelineResult {
+    ...
+    let metalEnabled: Bool
+}
+```
+
+**`STTPipeline.swift`** — `stopAndProcess()` 傳入值：
+```swift
+metalEnabled: sttResult.sttBreakdown?.metalEnabled ?? false
+```
+
+**`MenuBarController.swift`** — `updateTelemetryItem()` 顯示標籤：
+```swift
+let accel = result.metalEnabled ? "GPU" : "CPU"
+let title = "上次: \(chars)字 · STT \(sttSec)s [\(accel)]\(polishLabel) · 共 \(totalSec)s"
+```
+
+效果：
+```
+上次: 17字 · STT 4.6s [GPU] · LLM 1.8s · 共 6.4s   ← 正常
+上次: 17字 · STT 28.3s [CPU] · LLM 1.8s · 共 30.1s  ← Metal fallback 中
+```
+
+---
+
+## 現時狀態（2026-03-19 早上）
+
+| 項目 | 狀態 |
+|------|------|
+| CantoFlow 進程 | 運行中（每次啟動用 `cantoflow`） |
+| Metal GPU | ✅ 正常（最後一次確認 GPU，4.6s） |
+| STT 識別質量 | ✅ 正常（「試測試，收唔收到？1234」準確識別） |
+| LLM Polish | ✅ Qwen（`QWEN_API_KEY` 已設定） |
+| JTDev volume | ✅ 已掛載 |
+| Binary 位置 | `/Volumes/JTDev/CantoFlow/app/.build/release/cantoflow` |
+| 啟動指令 | `cantoflow`（symlink → `app/scripts/run.sh`） |
+
+---
+
+## 已知風險
+
+**Binary 在外置硬碟上** — 如 JTDev 再次斷線，進程必然再 SIGBUS 崩潰。今次修了 Metal fallback，但根本風險未解決。長遠建議：把 binary 移至內置 SSD，外置硬碟只放 models 和 `.out/` 輸出。
+
+---
+
+## 本 Session 修改文件
+
+| 文件 | 改動 |
+|------|------|
+| `app/Sources/CantoFlowApp/Core/WhisperRunner.swift` | Metal crash (exit 6) → 自動 CPU fallback + cache 失效 |
+| `app/Sources/CantoFlowApp/Core/Vocabulary/VocabularyStore.swift` | 移除 prompt 中的壞例子 `Thick see` |
+| `app/Sources/CantoFlowApp/Core/STTPipeline.swift` | `PipelineResult` 加 `metalEnabled`；model fallback 尊重 CPU state |
+| `app/Sources/CantoFlowApp/UI/MenuBarController.swift` | Menu bar 顯示 `[GPU]` / `[CPU]` 標籤 |

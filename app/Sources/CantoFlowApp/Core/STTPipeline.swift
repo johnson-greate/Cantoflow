@@ -35,6 +35,7 @@ struct PipelineResult {
     let polishStatus: String
     let fastIMERawStatus: String
     let fastIMEReplaceStatus: String
+    let metalEnabled: Bool
 }
 
 /// Minimum recording duration in milliseconds
@@ -298,7 +299,8 @@ final class STTPipeline {
             provider: provider,
             polishStatus: polishStatus,
             fastIMERawStatus: fastIMERawStatus,
-            fastIMEReplaceStatus: fastIMEReplaceStatus
+            fastIMEReplaceStatus: fastIMEReplaceStatus,
+            metalEnabled: sttResult.sttBreakdown?.metalEnabled ?? false
         )
     }
 
