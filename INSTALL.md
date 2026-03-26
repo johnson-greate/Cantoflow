@@ -6,7 +6,7 @@
 
 ## 🚀 方法一：自動安裝 (推薦)
 
-我們提供了一個自動化腳本，會幫你檢查依賴工具、安裝 `whisper.cpp` 與模型、編譯程式碼、並設定好全域捷徑。
+我們提供了一個自動化腳本，會幫你檢查依賴工具、安裝 `whisper.cpp` 與模型、編譯程式碼、安裝 `/Applications/CantoFlow.app`，並設定好全域捷徑。
 
 1. 打開終端機 (Terminal)。
 2. 切換到你下載或 git clone 下來的 `CantoFlow` 資料夾：
@@ -26,6 +26,7 @@
 - 編譯 `whisper-cli`
 - 下載 `large-v3-turbo`、`large-v3`、`small` 模型
 - 編譯 `app`
+- 安裝 `/Applications/CantoFlow.app`
 - 建立 `~/bin/cantoflow`
 - 建立 `~/.cantoflow.env`
 
@@ -64,16 +65,86 @@ cd app
 swift build -c release
 ```
 
-### 3. 設定全域捷徑 (Global Command)
-為了讓你能在任何地方打 `cantoflow` 就能啟動，我們需要建立一個軟連結 (Symlink) 到你的環境變數目錄 (例如 `~/bin` 或 `/usr/local/bin`)。
+### 3. 安裝 App Bundle
+先把 app bundle 安裝到 `/Applications`：
+
+```bash
+cd app
+./scripts/package_app.sh
+./scripts/install.sh
+```
+
+### 4. 設定全域捷徑 (Global Command)
+為了讓你能在任何地方打 `cantoflow` 就能啟動，建議建立一個 wrapper script 到 `~/bin/cantoflow`。它會先安全退出現有 app，再交給 launchd supervision 或直接開啟 `/Applications/CantoFlow.app`，避免 menubar 雙開。
 
 1. 確保 `~/bin` 目錄存在：
    ```bash
    mkdir -p ~/bin
    ```
-2. 建立軟連結指向啟動腳本：
+2. 建立 launcher script：
    ```bash
-   ln -sf "$(pwd)/scripts/run.sh" ~/bin/cantoflow
+   cat > ~/bin/cantoflow <<'EOF'
+   #!/bin/bash
+   set -euo pipefail
+
+   LOG_FILE="${HOME}/Library/Logs/CantoFlow.manual.log"
+   APP_BUNDLE="/Applications/CantoFlow.app"
+   APP_BINARY="${APP_BUNDLE}/Contents/MacOS/cantoflow"
+   LAUNCH_AGENT_LABEL="com.cantoflow.launchagent"
+   LAUNCH_AGENT_PLIST="${HOME}/Library/LaunchAgents/${LAUNCH_AGENT_LABEL}.plist"
+   BASE_ARGS=(
+     --project-root "/path/to/CantoFlow"
+     --stt-profile fast
+     --auto-replace
+   )
+
+   mkdir -p "$(dirname "${LOG_FILE}")"
+
+   log_line() {
+     {
+       printf '[%s] %s' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1"
+       printf '\n'
+     } >> "${LOG_FILE}"
+   }
+
+   terminate_existing_instances() {
+     local pids=()
+     while IFS= read -r pid; do
+       [[ -n "${pid}" ]] || continue
+       pids+=("${pid}")
+     done < <(pgrep -f "${APP_BINARY}" || true)
+
+     [[ "${#pids[@]}" -eq 0 ]] && return
+     kill "${pids[@]}" 2>/dev/null || true
+     sleep 1
+     kill -9 "${pids[@]}" 2>/dev/null || true
+   }
+
+   if [[ ! -x "${APP_BINARY}" ]]; then
+     echo "Installed app not found at ${APP_BINARY}" >&2
+     exit 1
+   fi
+
+   log_line "manual-launch request"
+
+   if pgrep -f "${APP_BINARY}" >/dev/null 2>&1; then
+     log_line "request-clean-quit"
+     osascript -e 'tell application "CantoFlow" to quit' >/dev/null 2>&1 || true
+     sleep 1
+   fi
+
+   terminate_existing_instances
+
+   if [[ "$#" -eq 0 ]] && [[ -f "${LAUNCH_AGENT_PLIST}" ]]; then
+     log_line "launch-via-launchd | label=${LAUNCH_AGENT_LABEL}"
+     launchctl kickstart -k "gui/$(id -u)/${LAUNCH_AGENT_LABEL}"
+     exit 0
+   fi
+
+   log_line "launch-via-open"
+   /usr/bin/open -n "${APP_BUNDLE}" --args "${BASE_ARGS[@]}" "$@"
+   EOF
+   chmod 755 ~/bin/cantoflow
    ```
 3. 確保 `~/bin` 已經加入到你的系統 `PATH` 中 (可以在 `~/.zshrc` 或 `~/.bash_profile` 內加入 `export PATH="$HOME/bin:$PATH"`)。
 

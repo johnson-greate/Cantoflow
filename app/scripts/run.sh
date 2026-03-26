@@ -12,6 +12,80 @@ REPO_ROOT="$(dirname "${PROJECT_DIR}")"
 BINARY_PATH="${PROJECT_DIR}/.build/release/cantoflow"
 WHISPER_DIR="${REPO_ROOT}/third_party/whisper.cpp"
 WHISPER_BIN="${WHISPER_DIR}/build/bin/whisper-cli"
+APP_BUNDLE_PATH="/Applications/CantoFlow.app"
+APP_BUNDLE_BINARY="/Applications/CantoFlow.app/Contents/MacOS/cantoflow"
+LAUNCH_AGENT_LABEL="com.cantoflow.launchagent"
+LAUNCH_AGENT_PLIST="${HOME}/Library/LaunchAgents/${LAUNCH_AGENT_LABEL}.plist"
+
+has_pid() {
+  local needle="$1"
+  local pid
+  for pid in "$@"; do
+    [[ "${pid}" == "${needle}" ]] && return 0
+  done
+  return 1
+}
+
+terminate_existing_instances() {
+  local current_pid="$$"
+  local pids=()
+  local patterns=(
+    "${BINARY_PATH}"
+    "${APP_BUNDLE_BINARY}"
+  )
+
+  for pattern in "${patterns[@]}"; do
+    while IFS= read -r pid; do
+      [[ -n "${pid}" ]] || continue
+      [[ "${pid}" == "${current_pid}" ]] && continue
+
+      if ! has_pid "${pid}" "${pids[@]-}"; then
+        pids+=("${pid}")
+      fi
+    done < <(pgrep -f "${pattern}" || true)
+  done
+
+  if [[ "${#pids[@]}" -eq 0 ]]; then
+    return
+  fi
+
+  echo "Stopping existing CantoFlow instance(s): ${pids[*]}"
+  kill "${pids[@]}" 2>/dev/null || true
+
+  local deadline=$((SECONDS + 5))
+  while (( SECONDS < deadline )); do
+    local alive=0
+    for pid in "${pids[@]}"; do
+      if kill -0 "${pid}" 2>/dev/null; then
+        alive=1
+        break
+      fi
+    done
+
+    (( alive == 0 )) && return
+    sleep 0.2
+  done
+
+  echo "Force-stopping remaining CantoFlow instance(s): ${pids[*]}"
+  kill -9 "${pids[@]}" 2>/dev/null || true
+}
+
+safe_quit_existing_instances() {
+  if pgrep -f "${APP_BUNDLE_BINARY}" >/dev/null 2>&1; then
+    echo "Requesting CantoFlow to quit cleanly..."
+    osascript -e 'tell application "CantoFlow" to quit' >/dev/null 2>&1 || true
+
+    local deadline=$((SECONDS + 5))
+    while (( SECONDS < deadline )); do
+      if ! pgrep -f "${APP_BUNDLE_BINARY}" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.2
+    done
+  fi
+
+  terminate_existing_instances
+}
 
 build_release() {
   (
@@ -103,7 +177,26 @@ if ! BUILD_OUTPUT="$("${BINARY_PATH}" --help 2>&1 >/dev/null)"; then
   fi
 fi
 
-exec "${BINARY_PATH}" \
+if [[ "${#ARGS[@]}" -gt 0 ]] && [[ " ${ARGS[*]} " == *" --help "* || " ${ARGS[*]} " == *" -h "* ]]; then
+  exec "${BINARY_PATH}" "${ARGS[@]}"
+fi
+
+safe_quit_existing_instances
+
+if [[ ! -x "${APP_BUNDLE_BINARY}" ]]; then
+  echo "Installed app not found at ${APP_BUNDLE_BINARY}" >&2
+  echo "Install /Applications/CantoFlow.app first." >&2
+  exit 1
+fi
+
+if [[ "${#ARGS[@]}" -eq 0 ]] && [[ -f "${LAUNCH_AGENT_PLIST}" ]]; then
+  echo "Starting CantoFlow via launchd supervision..."
+  launchctl kickstart -k "gui/$(id -u)/${LAUNCH_AGENT_LABEL}"
+  exit 0
+fi
+
+echo "Starting CantoFlow.app..."
+open -n "${APP_BUNDLE_PATH}" --args \
   --project-root "${REPO_ROOT}" \
   --stt-profile fast \
   --auto-replace \

@@ -94,6 +94,24 @@ final class TextInserter {
         getFocusedElement()
     }
 
+    /// Capture currently selected text from the focused AX element.
+    /// Returns nil if the frontmost field does not expose selected text via AX.
+    func captureSelectedText() -> String? {
+        guard let focusedElement = getFocusedElement() else { return nil }
+
+        var selectedText: AnyObject?
+        guard AXUIElementCopyAttributeValue(
+            focusedElement,
+            kAXSelectedTextAttribute as CFString,
+            &selectedText
+        ) == .success else {
+            return nil
+        }
+
+        return (selectedText as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Returns true if the frontmost app is a terminal emulator.
     func isFrontmostAppTerminal() -> Bool {
         guard let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else {

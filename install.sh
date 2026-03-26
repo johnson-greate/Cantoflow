@@ -8,6 +8,7 @@ echo ""
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_DIR="$ROOT_DIR/app"
+APP_INSTALL_SCRIPT="$APP_DIR/scripts/install.sh"
 
 # Parse optional flags
 PREBUILT_BINARY=""
@@ -168,27 +169,129 @@ fi
 
 cd "$ROOT_DIR"
 
-# 6. Setup Global Command
+# 6. Install app bundle
+log_step "安裝 CantoFlow.app"
+"$APP_INSTALL_SCRIPT"
+
+# 7. Setup Global Command
 log_step "設定全域捷徑"
 BIN_DIR="$HOME/bin"
 mkdir -p "$BIN_DIR"
+CANTO_LAUNCHER="$BIN_DIR/cantoflow"
+cat > "$CANTO_LAUNCHER" <<'EOF'
+#!/bin/bash
+set -euo pipefail
 
-# Ensure we get the absolute path to the run script
-SCRIPT_PATH="$APP_DIR/scripts/run.sh"
+LOG_FILE="${HOME}/Library/Logs/CantoFlow.manual.log"
+APP_BUNDLE="/Applications/CantoFlow.app"
+APP_BINARY="${APP_BUNDLE}/Contents/MacOS/cantoflow"
+LAUNCH_AGENT_LABEL="com.cantoflow.launchagent"
+LAUNCH_AGENT_PLIST="${HOME}/Library/LaunchAgents/${LAUNCH_AGENT_LABEL}.plist"
+BASE_ARGS=(
+  --project-root "__CANTOFLOW_PROJECT_ROOT__"
+  --stt-profile fast
+  --auto-replace
+)
 
-ln -sf "$SCRIPT_PATH" "$BIN_DIR/cantoflow"
-chmod +x "$SCRIPT_PATH"
+mkdir -p "$(dirname "${LOG_FILE}")"
 
-echo "✅ 捷徑已建立: $BIN_DIR/cantoflow -> $SCRIPT_PATH"
+log_line() {
+  {
+    printf '[%s] %s' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1"
+    printf '\n'
+  } >> "${LOG_FILE}"
+}
 
-# 7. Check PATH configuration
+terminate_existing_instances() {
+  local pids=()
+  while IFS= read -r pid; do
+    [[ -n "${pid}" ]] || continue
+    pids+=("${pid}")
+  done < <(pgrep -f "${APP_BINARY}" || true)
+
+  if [[ "${#pids[@]}" -eq 0 ]]; then
+    return
+  fi
+
+  log_line "terminate-existing | pids=${pids[*]}"
+  kill "${pids[@]}" 2>/dev/null || true
+
+  local deadline=$((SECONDS + 5))
+  while (( SECONDS < deadline )); do
+    local alive=0
+    for pid in "${pids[@]}"; do
+      if kill -0 "${pid}" 2>/dev/null; then
+        alive=1
+        break
+      fi
+    done
+
+    (( alive == 0 )) && return
+    sleep 0.2
+  done
+
+  log_line "force-terminate-existing | pids=${pids[*]}"
+  kill -9 "${pids[@]}" 2>/dev/null || true
+}
+
+safe_quit_existing_instances() {
+  if pgrep -f "${APP_BINARY}" >/dev/null 2>&1; then
+    log_line "request-clean-quit"
+    osascript -e 'tell application "CantoFlow" to quit' >/dev/null 2>&1 || true
+
+    local deadline=$((SECONDS + 5))
+    while (( SECONDS < deadline )); do
+      if ! pgrep -f "${APP_BINARY}" >/dev/null 2>&1; then
+        return
+      fi
+      sleep 0.2
+    done
+  fi
+
+  terminate_existing_instances
+}
+
+if [[ ! -x "${APP_BINARY}" ]]; then
+  echo "Installed app not found at ${APP_BINARY}" >&2
+  exit 1
+fi
+
+{
+  printf '[%s] manual-launch request | cwd=%s | args=' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$(pwd)"
+  printf '%q ' "${BASE_ARGS[@]}" "$@"
+  printf '\n'
+} >> "${LOG_FILE}"
+
+safe_quit_existing_instances
+
+if [[ "$#" -eq 0 ]] && [[ -f "${LAUNCH_AGENT_PLIST}" ]]; then
+  log_line "launch-via-launchd | label=${LAUNCH_AGENT_LABEL}"
+  launchctl kickstart -k "gui/$(id -u)/${LAUNCH_AGENT_LABEL}"
+  exit 0
+fi
+
+log_line "launch-via-open"
+/usr/bin/open -n "${APP_BUNDLE}" --args "${BASE_ARGS[@]}" "$@"
+EOF
+python3 - <<'PY' "$CANTO_LAUNCHER" "$ROOT_DIR"
+from pathlib import Path
+import sys
+launcher = Path(sys.argv[1])
+root = sys.argv[2]
+launcher.write_text(launcher.read_text().replace("__CANTOFLOW_PROJECT_ROOT__", root))
+PY
+chmod 755 "$CANTO_LAUNCHER"
+
+echo "✅ 捷徑已建立: $CANTO_LAUNCHER"
+
+# 8. Check PATH configuration
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     echo "⚠️ 警告: $BIN_DIR 尚未加入到你的環境變數 PATH 中。"
     echo "💡 建議執行以下指令將其加入 (以 Zsh 為例):"
     echo "    echo 'export PATH=\"\$HOME/bin:\$PATH\"' >> ~/.zshrc && source ~/.zshrc"
 fi
 
-# 8. Env setup wizard for API Keys
+# 9. Env setup wizard for API Keys
 ENV_FILE="$HOME/.cantoflow.env"
 if [ ! -f "$ENV_FILE" ]; then
     echo ""

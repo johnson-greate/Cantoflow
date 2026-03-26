@@ -11,6 +11,7 @@ enum UIState: String {
 final class MenuBarController: NSObject, PushToTalkDelegate {
     private let config: AppConfig
     private let pipeline: STTPipeline
+    private let textInserter = TextInserter()
 
     private var statusItem: NSStatusItem!
     private let menu = NSMenu()
@@ -18,10 +19,12 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
 
     // Last transcription telemetry display
     private var telemetryItem: NSMenuItem?
+    private var runtimeStatusItem: NSMenuItem?
     
     // Copy integration
     private var lastResultText: String?
     private var copyResultItem: NSMenuItem?
+    private var learningStatusItem: NSMenuItem?
     
     // Usage hint display
     private var hintItem: NSMenuItem?
@@ -52,6 +55,12 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
             guard let self else { return }
             self.setupStatusItem()
             self.setupMenu()
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(self.handleLearningStatusChange(_:)),
+                name: .cantoFlowLearningStatusDidChange,
+                object: nil
+            )
             // Wire the settings window to the live pipeline
             SettingsWindowController.shared.pipeline = self.pipeline
             // Wire overlay panel callbacks once. The panel is a singleton that lives
@@ -108,6 +117,11 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         telemetry.isEnabled = false
         menu.addItem(telemetry)
         telemetryItem = telemetry
+
+        let runtimeStatus = NSMenuItem(title: "重啟: —", action: nil, keyEquivalent: "")
+        runtimeStatus.isEnabled = false
+        menu.addItem(runtimeStatus)
+        runtimeStatusItem = runtimeStatus
         
         let copyResult = NSMenuItem(
             title: "Copy Last Result",
@@ -119,6 +133,20 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         copyResult.isEnabled = false
         menu.addItem(copyResult)
         copyResultItem = copyResult
+
+        let learningStatus = NSMenuItem(title: "學習: 尚無記錄", action: nil, keyEquivalent: "")
+        learningStatus.isEnabled = false
+        menu.addItem(learningStatus)
+        learningStatusItem = learningStatus
+
+        let learnSelection = NSMenuItem(
+            title: "Learn Selected Text",
+            action: #selector(learnSelectedText),
+            keyEquivalent: "l"
+        )
+        learnSelection.target = self
+        learnSelection.image = menuImage("text.badge.plus")
+        menu.addItem(learnSelection)
 
         menu.addItem(.separator())
 
@@ -140,6 +168,15 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         openOut.target = self
         openOut.image = menuImage("folder")
         menu.addItem(openOut)
+
+        let openRuntimeLog = NSMenuItem(
+            title: "Open Runtime Log",
+            action: #selector(openRuntimeLog),
+            keyEquivalent: ""
+        )
+        openRuntimeLog.target = self
+        openRuntimeLog.image = menuImage("doc.text.magnifyingglass")
+        menu.addItem(openRuntimeLog)
 
         menu.addItem(.separator())
 
@@ -183,11 +220,15 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
     // MARK: - Telemetry & Display Update
 
     func updateHint(keyName: String) {
-        hintItem?.title = "Hold \(keyName) to record"
+        hintItem?.title = "Hold \(keyName) to record · Press F14 to learn"
     }
 
     func updateInputDevice(name: String) {
         inputDeviceItem?.title = "Input: \(name)"
+    }
+
+    func updateRuntimeStatus(launchesToday: Int, restartsToday: Int, previousExitSummary: String) {
+        runtimeStatusItem?.title = "重啟: 今日啟動 \(launchesToday) 次 / 重啟 \(restartsToday) 次 · 上次退出: \(previousExitSummary)"
     }
 
     private func updateTelemetryItem(_ result: PipelineResult) {
@@ -283,11 +324,16 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         NSWorkspace.shared.open(config.outDir)
     }
 
+    @objc private func openRuntimeLog() {
+        NSWorkspace.shared.open(RuntimeHealthMonitor.shared.runtimeLogURL())
+    }
+
     @objc private func openSettings() {
         SettingsWindowController.shared.show()
     }
 
     @objc private func quitApp() {
+        RuntimeHealthMonitor.shared.markGracefulTermination(reason: "user_quit_menu")
         NSApp.terminate(nil)
     }
 
@@ -299,6 +345,79 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         
         let preview = text.count > 15 ? text.prefix(15) + "..." : text
         NotificationManager.shared.notify("Copied: \(preview)")
+    }
+
+    @MainActor @objc private func learnSelectedText() {
+        triggerLearning()
+    }
+
+    @MainActor
+    func triggerLearning() {
+        switch CorrectionWatcher.shared.learnNow() {
+        case .added(let terms):
+            let list = terms.joined(separator: "、")
+            LearningFeedback.shared.record("F14 learned correction", detail: list)
+            NotificationManager.shared.notify("已學習修訂：\(list)", title: "CantoFlow 學習")
+            return
+        case .alreadyKnown(let terms):
+            let list = terms.joined(separator: "、")
+            LearningFeedback.shared.record("F14 correction already known", detail: list)
+            NotificationManager.shared.notify("修訂詞已在詞庫中：\(list)", title: "CantoFlow 學習")
+            return
+        case .unchanged, .noActiveSession, .regionNotFound, .noCandidates, .unreadableField:
+            LearningFeedback.shared.record("F14 correction learning fell back")
+            break
+        }
+
+        learnCurrentSelectionFallback()
+    }
+
+    @MainActor
+    private func learnCurrentSelectionFallback() {
+        guard let selectedText = textInserter.captureSelectedText(),
+              let term = sanitizeSelectedTerm(selectedText) else {
+            LearningFeedback.shared.record("F14 learning failed", detail: "no correction result and AX selected text unavailable")
+            NotificationManager.shared.notify("未能學習修訂，也未能讀取目前選中文字。", title: "CantoFlow 學習")
+            return
+        }
+
+        let entry = VocabEntry(
+            term: term,
+            pronunciationHint: nil,
+            category: .other,
+            notes: "手動選取學習"
+        )
+
+        if VocabularyStore.shared.addPersonalEntry(entry) {
+            LearningFeedback.shared.record("F14 learned selection", detail: term)
+            NotificationManager.shared.notify("已加入詞庫：\(term)", title: "CantoFlow 學習")
+            print("[LearnSelectedText] Added vocabulary: \(term)")
+        } else {
+            LearningFeedback.shared.record("F14 selection skipped", detail: term)
+            NotificationManager.shared.notify("詞庫已存在或容量已滿：\(term)", title: "CantoFlow 學習")
+            print("[LearnSelectedText] Skipped vocabulary: \(term)")
+        }
+    }
+
+    @objc private func handleLearningStatusChange(_ notification: Notification) {
+        guard let summary = notification.userInfo?["summary"] as? String else { return }
+        learningStatusItem?.title = "學習: \(summary)"
+    }
+
+    private func sanitizeSelectedTerm(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        guard !trimmed.contains("\n"), !trimmed.contains("\r") else { return nil }
+        guard trimmed.count <= 32 else { return nil }
+        let punctuation = CharacterSet.punctuationCharacters
+        let symbols = CharacterSet.symbols
+        let whitespace = CharacterSet.whitespacesAndNewlines
+        guard trimmed.unicodeScalars.contains(where: {
+            !punctuation.contains($0) && !symbols.contains($0) && !whitespace.contains($0)
+        }) else {
+            return nil
+        }
+        return trimmed
     }
 
     // MARK: - Recording Control

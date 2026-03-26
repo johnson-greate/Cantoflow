@@ -15,43 +15,77 @@ final class LaunchAtLoginManager {
 
     func setEnabled(_ enabled: Bool) throws {
         if enabled {
-            try installLaunchAgent()
+            try installLaunchAgent(reload: true)
         } else {
             try uninstallLaunchAgent()
         }
     }
 
-    private var launchAgentURL: URL {
+    func reconcileInstalledFilesIfNeeded() {
+        guard isEnabled else { return }
+        do {
+            try installLaunchAgent(reload: false)
+        } catch {
+            RuntimeHealthMonitor.shared.record(
+                "launchagent-reconcile-failed",
+                details: ["error=\(error.localizedDescription)"]
+            )
+        }
+    }
+
+    private var homeURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
+    }
+
+    private var appSupportURL: URL {
+        homeURL.appendingPathComponent("Library/Application Support/CantoFlow", isDirectory: true)
+    }
+
+    private var launchAgentURL: URL {
+        homeURL
             .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
             .appendingPathComponent("\(label).plist")
     }
 
     private var legacyLaunchAgentURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
+        homeURL
             .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
             .appendingPathComponent("\(legacyLabel).plist")
     }
 
-    private func installLaunchAgent() throws {
-        let agentDir = launchAgentURL.deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: agentDir, withIntermediateDirectories: true)
+    private var wrapperURL: URL {
+        appSupportURL.appendingPathComponent("launchd-wrapper.sh")
+    }
+
+    private var launchdLogURL: URL {
+        homeURL.appendingPathComponent("Library/Logs/CantoFlow.launchd.log")
+    }
+
+    private func installLaunchAgent(reload: Bool) throws {
+        try FileManager.default.createDirectory(at: launchAgentURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: appSupportURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: launchdLogURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try cleanupLegacyLaunchAgent()
 
-        let runScriptURL = try resolveRunScriptURL()
-        let plist: [String: Any] = [
-            "Label": label,
-            "ProgramArguments": ["/bin/bash", runScriptURL.path],
-            "RunAtLoad": true,
-            "KeepAlive": false,
-            "WorkingDirectory": runScriptURL.deletingLastPathComponent().deletingLastPathComponent().path,
-            "StandardOutPath": FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/CantoFlow.launchd.log").path,
-            "StandardErrorPath": FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/CantoFlow.launchd.log").path
-        ]
+        let config = AppConfig.fromArgs()
+        let wrapperContent = makeWrapperScript(projectRoot: config.projectRoot.path)
+        try writeFileIfNeeded(to: wrapperURL, content: wrapperContent, executable: true)
 
+        let plist = makeLaunchAgentPlist()
         let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
-        try data.write(to: launchAgentURL, options: .atomic)
+        try writeDataIfNeeded(to: launchAgentURL, data: data)
 
+        RuntimeHealthMonitor.shared.record(
+            reload ? "launchagent-install" : "launchagent-reconcile",
+            details: [
+                "program=\(wrapperURL.path)",
+                "working_dir=\(appSupportURL.path)",
+                "keepalive=successful-exit-false",
+                "project_root=\(config.projectRoot.path)"
+            ]
+        )
+
+        guard reload else { return }
         try runLaunchCtl(arguments: ["bootout", "gui/\(getuid())", launchAgentURL.path], allowFailure: true)
         try runLaunchCtl(arguments: ["bootstrap", "gui/\(getuid())", launchAgentURL.path], allowFailure: false)
     }
@@ -61,25 +95,75 @@ final class LaunchAtLoginManager {
         if FileManager.default.fileExists(atPath: launchAgentURL.path) {
             try FileManager.default.removeItem(at: launchAgentURL)
         }
+        if FileManager.default.fileExists(atPath: wrapperURL.path) {
+            try FileManager.default.removeItem(at: wrapperURL)
+        }
         try cleanupLegacyLaunchAgent()
+        RuntimeHealthMonitor.shared.record("launchagent-uninstall", details: ["label=\(label)"])
     }
 
-    private func resolveRunScriptURL() throws -> URL {
-        let executableURL = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
-        let appDir = executableURL
-            .deletingLastPathComponent()   // release
-            .deletingLastPathComponent()   // .build
-            .deletingLastPathComponent()   // app bundle directory
-        let scriptURL = appDir.appendingPathComponent("scripts/run.sh")
+    private func makeLaunchAgentPlist() -> [String: Any] {
+        [
+            "Label": label,
+            "ProgramArguments": [wrapperURL.path],
+            "RunAtLoad": true,
+            "KeepAlive": ["SuccessfulExit": false],
+            "WorkingDirectory": appSupportURL.path,
+            "StandardOutPath": launchdLogURL.path,
+            "StandardErrorPath": launchdLogURL.path,
+            "ProcessType": "Interactive"
+        ]
+    }
 
-        guard FileManager.default.isExecutableFile(atPath: scriptURL.path) else {
-            throw NSError(
-                domain: "LaunchAtLoginManager",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "run.sh not found at \(scriptURL.path)"]
-            )
+    private func makeWrapperScript(projectRoot: String) -> String {
+        let home = homeURL.path
+        let appBinary = "/Applications/CantoFlow.app/Contents/MacOS/cantoflow"
+        return """
+        #!/bin/bash
+        set -euo pipefail
+
+        timestamp() {
+          /bin/date -u +"%Y-%m-%dT%H:%M:%SZ"
         }
-        return scriptURL
+
+        export HOME="\(home)"
+        export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+        if [[ -f "${HOME}/.cantoflow.env" ]]; then
+          set -o allexport
+          source "${HOME}/.cantoflow.env"
+          set +o allexport
+        fi
+
+        APP_BINARY="\(appBinary)"
+        PROJECT_ROOT="\(projectRoot)"
+
+        if [[ ! -x "${APP_BINARY}" ]]; then
+          echo "[$(timestamp)] launchd-wrapper error | missing app binary at ${APP_BINARY}"
+          exit 111
+        fi
+
+        echo "[$(timestamp)] launchd-wrapper start | pid=$$ | app_binary=${APP_BINARY} | project_root=${PROJECT_ROOT}"
+        exec "${APP_BINARY}" \\
+          --project-root "${PROJECT_ROOT}" \\
+          --stt-profile fast \\
+          --auto-replace
+        """
+    }
+
+    private func writeFileIfNeeded(to url: URL, content: String, executable: Bool) throws {
+        let data = Data(content.utf8)
+        try writeDataIfNeeded(to: url, data: data)
+        if executable {
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        }
+    }
+
+    private func writeDataIfNeeded(to url: URL, data: Data) throws {
+        if let existing = try? Data(contentsOf: url), existing == data {
+            return
+        }
+        try data.write(to: url, options: .atomic)
     }
 
     private func runLaunchCtl(arguments: [String], allowFailure: Bool) throws {

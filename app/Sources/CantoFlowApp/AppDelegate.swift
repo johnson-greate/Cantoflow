@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let config: AppConfig
     private var menuBarController: MenuBarController?
     private var pushToTalkManager: PushToTalkManager?
+    private var learningHotkeyManager: LearningHotkeyManager?
     private var pipeline: STTPipeline?
 
     override init() {
@@ -20,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Accessory app — no dock icon (Info.plist LSUIElement=YES is the primary
         // gate; this call ensures it is also set at runtime).
         NSApp.setActivationPolicy(.accessory)
+        LaunchAtLoginManager.shared.reconcileInstalledFilesIfNeeded()
 
         // Pre-warm the overlay panel singleton on the main thread.
         // RecordingOverlayPanel.shared is a static let — accessing it here guarantees
@@ -44,6 +46,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pushToTalkManager?.delegate = menuBarController
         pushToTalkManager?.triggerKey = resolveTriggerKey()
         pushToTalkManager?.start()
+
+        learningHotkeyManager = LearningHotkeyManager { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.menuBarController?.triggerLearning()
+            }
+        }
+        learningHotkeyManager?.start()
         
         if let keyName = pushToTalkManager?.triggerKey.displayName {
             menuBarController?.updateHint(keyName: keyName)
@@ -69,9 +78,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        RuntimeHealthMonitor.shared.markGracefulTermination(reason: "app_terminate")
         UserDefaults.standard.removeObserver(self, forKeyPath: "customHotkey")
         UserDefaults.standard.removeObserver(self, forKeyPath: AudioDeviceManager.preferredInputDeviceDefaultsKey)
         pushToTalkManager?.stop()
+        learningHotkeyManager?.stop()
     }
 
     override func observeValue(forKeyPath keyPath: String?, of object: Any?, change: [NSKeyValueChangeKey : Any]?, context: UnsafeMutableRawPointer?) {
@@ -95,6 +106,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func checkStartupHealthAndNotify() {
+        let runtimeSummary = RuntimeHealthMonitor.shared.startup(buildVersion: appBuildVersion)
+        menuBarController?.updateRuntimeStatus(
+            launchesToday: runtimeSummary.launchesToday,
+            restartsToday: runtimeSummary.restartsToday,
+            previousExitSummary: runtimeSummary.previousExitSummary
+        )
+
         pipeline?.requestMicrophonePermission { granted in
             DispatchQueue.main.async {
                 guard granted else {
@@ -110,6 +128,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     : "Startup checks: " + checks.joined(separator: " | ")
 
                 NotificationManager.shared.notify(summary)
+                if runtimeSummary.previousExitWasUnexpected {
+                    NotificationManager.shared.notify(
+                        "上次疑似異常退出。今日已啟動 \(runtimeSummary.launchesToday) 次。詳情見 Runtime Log。",
+                        title: "CantoFlow Runtime"
+                    )
+                }
                 print("[Startup] Input device: \(inputDevice)")
                 if !checks.isEmpty {
                     for item in checks {

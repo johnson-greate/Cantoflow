@@ -94,6 +94,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
+            RuntimeHealthMonitor.shared.markGracefulTermination(reason: "settings_restart")
             NSApp.terminate(nil)
         }
         return true

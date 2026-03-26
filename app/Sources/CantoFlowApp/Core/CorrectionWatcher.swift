@@ -14,6 +14,27 @@ import ApplicationServices
 final class CorrectionWatcher {
     static let shared = CorrectionWatcher()
 
+    enum LearnAttemptResult {
+        case added([String])
+        case noActiveSession
+        case unchanged
+        case unreadableField
+        case regionNotFound
+        case noCandidates
+        case alreadyKnown([String])
+    }
+
+    enum WatchSkipReason: String {
+        case emptyInsertedText
+        case fieldUnreadable
+        case insertedTextNotObserved
+        case regionNotFound
+        case unchanged
+        case noCandidates
+        case textTooLong
+        case unsupportedField
+    }
+
     private struct WatchSession {
         let element: AXUIElement
         let insertedText: String
@@ -24,6 +45,8 @@ final class CorrectionWatcher {
     private var watchTask: Task<Void, Never>?
 
     private static let watchWindowNs: UInt64 = 30_000_000_000  // 30 seconds
+    private static let anchorRetryNs: UInt64 = 150_000_000     // 150 ms
+    private static let anchorRetryCount = 8
 
     private init() {}
 
@@ -33,17 +56,29 @@ final class CorrectionWatcher {
     /// Cancels any previous session automatically.
     func start(element: AXUIElement, insertedText: String) {
         cancel()
-        guard !insertedText.isEmpty else { return }
-
-        let anchor = captureAnchor(element: element, before: insertedText)
-        session = WatchSession(element: element, insertedText: insertedText, contextAnchor: anchor)
-
         watchTask = Task { [weak self] in
+            guard let self else { return }
+            let trimmed = insertedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                self.log("Skip start: inserted text empty")
+                LearningFeedback.shared.record("CorrectionWatcher: skipped", detail: "inserted text empty")
+                return
+            }
+
+            guard let anchor = await self.waitForAnchor(element: element, insertedText: trimmed) else {
+                self.handleStartFailure(.unsupportedField, insertedText: trimmed)
+                return
+            }
+
+            self.session = WatchSession(element: element, insertedText: trimmed, contextAnchor: anchor)
+            self.log("Watching \(trimmed.count) chars for 30s")
+            LearningFeedback.shared.record("CorrectionWatcher: watching", detail: "\(trimmed.count) chars for 30s")
+            NotificationManager.shared.notify("修訂監看已啟動（30秒）", title: "CantoFlow 學習")
+
             try? await Task.sleep(nanoseconds: Self.watchWindowNs)
             guard !Task.isCancelled else { return }
-            self?.evaluate()
+            self.evaluate()
         }
-        print("[CorrectionWatcher] Watching \(insertedText.count) chars for 30s")
     }
 
     /// Evaluate corrections immediately and cancel the timer.
@@ -51,7 +86,7 @@ final class CorrectionWatcher {
     func flush() {
         watchTask?.cancel()
         watchTask = nil
-        evaluate()
+        _ = evaluate()
     }
 
     /// Cancel without evaluating (e.g. app quit).
@@ -61,22 +96,48 @@ final class CorrectionWatcher {
         session = nil
     }
 
+    func learnNow() -> LearnAttemptResult {
+        watchTask?.cancel()
+        watchTask = nil
+        return evaluate()
+    }
+
     // MARK: - Evaluation
 
-    private func evaluate() {
-        guard let s = session else { return }
+    @discardableResult
+    private func evaluate() -> LearnAttemptResult {
+        guard let s = session else { return .noActiveSession }
         session = nil
 
-        guard let currentText = readValue(s.element) else { return }
+        guard let currentText = readValue(s.element) else {
+            log("Stop: focused field no longer readable")
+            LearningFeedback.shared.record("CorrectionWatcher: failed", detail: "focused field unreadable")
+            NotificationManager.shared.notify("未能讀取目前欄位，今次修訂不會學習。", title: "CantoFlow 學習")
+            return .unreadableField
+        }
 
         guard let region = locateRegion(
             in: currentText,
             anchor: s.contextAnchor,
             originalLength: s.insertedText.count
-        ), region != s.insertedText else { return }
+        ) else {
+            log("Stop: failed to locate watched region")
+            LearningFeedback.shared.record("CorrectionWatcher: failed", detail: "watched region not found")
+            return .regionNotFound
+        }
+
+        guard region != s.insertedText else {
+            log("Stop: no user correction detected")
+            LearningFeedback.shared.record("CorrectionWatcher: no change")
+            return .unchanged
+        }
 
         let candidates = diffCandidates(original: s.insertedText, corrected: region)
-        guard !candidates.isEmpty else { return }
+        guard !candidates.isEmpty else {
+            log("Stop: diff found changes but no vocabulary candidates")
+            LearningFeedback.shared.record("CorrectionWatcher: no candidates")
+            return .noCandidates
+        }
 
         var added: [String] = []
         for term in candidates {
@@ -94,7 +155,13 @@ final class CorrectionWatcher {
         if !added.isEmpty {
             let list = added.joined(separator: "、")
             NotificationManager.shared.notify("自動加入詞庫：\(list)", title: "CantoFlow 學習")
-            print("[CorrectionWatcher] Auto-added vocabulary: \(list)")
+            log("Auto-added vocabulary: \(list)")
+            LearningFeedback.shared.record("CorrectionWatcher: learned", detail: list)
+            return .added(added)
+        } else {
+            log("Candidates already existed or capacity full: \(candidates.joined(separator: "、"))")
+            LearningFeedback.shared.record("CorrectionWatcher: already known", detail: candidates.joined(separator: "、"))
+            return .alreadyKnown(candidates)
         }
     }
 
@@ -108,13 +175,21 @@ final class CorrectionWatcher {
         return obj as? String
     }
 
-    /// Capture up to 30 chars immediately before `inserted` in the element's current value.
-    private func captureAnchor(element: AXUIElement, before inserted: String) -> String {
-        guard let full = readValue(element),
-              let range = full.range(of: inserted, options: .backwards) else { return "" }
-        let end = range.lowerBound
-        let start = full.index(end, offsetBy: -30, limitedBy: full.startIndex) ?? full.startIndex
-        return String(full[start..<end])
+    private func waitForAnchor(element: AXUIElement, insertedText: String) async -> String? {
+        for attempt in 0..<Self.anchorRetryCount {
+            if let full = readValue(element),
+               let range = full.range(of: insertedText, options: .backwards) {
+                let end = range.lowerBound
+                let start = full.index(end, offsetBy: -30, limitedBy: full.startIndex) ?? full.startIndex
+                return String(full[start..<end])
+            }
+
+            if attempt < Self.anchorRetryCount - 1 {
+                try? await Task.sleep(nanoseconds: Self.anchorRetryNs)
+            }
+        }
+
+        return nil
     }
 
     /// Locate the text region in `text` that corresponds to our original insertion,
@@ -182,6 +257,9 @@ final class CorrectionWatcher {
     /// adjacent kept characters to form a meaningful compound (e.g. "拎" → "拎貨").
     private func diffCandidates(original: String, corrected: String) -> [String] {
         let ops = lcsOps(Array(original), Array(corrected))
+        if ops.isEmpty && (!original.isEmpty || !corrected.isEmpty) {
+            log("Skip candidate extraction: diff window too large (\(original.count) -> \(corrected.count))")
+        }
         var candidates: [String] = []
         var i = 0
 
@@ -224,5 +302,23 @@ final class CorrectionWatcher {
             (0x4E00...0x9FFF).contains($0.value)    // CJK Unified Ideographs
             || (0x3400...0x4DBF).contains($0.value) // CJK Extension A
         }
+    }
+
+    private func handleStartFailure(_ reason: WatchSkipReason, insertedText: String) {
+        let message: String
+        switch reason {
+        case .unsupportedField:
+            message = "今次輸入欄位不支援修訂監看，可改用 Learn Selected Text。"
+        default:
+            message = "今次未能啟動修訂監看。"
+        }
+
+        log("Failed to start watcher: \(reason.rawValue) for \(insertedText.count) chars")
+        LearningFeedback.shared.record("CorrectionWatcher: failed to start", detail: "\(reason.rawValue), \(insertedText.count) chars")
+        NotificationManager.shared.notify(message, title: "CantoFlow 學習")
+    }
+
+    private func log(_ message: String) {
+        print("[CorrectionWatcher] \(message)")
     }
 }
