@@ -1,142 +1,185 @@
 # CantoFlow — Thread Handoff
 
-_Date: 2026-03-19_
+_Date: 2026-03-27_
 
 ---
 
-## 事故摘要
+## 本輪重點
 
-**2026-03-18 18:06** — JTDev 外置硬碟在 CantoFlow 運行期間被強制卸載（force unmount）。CantoFlow binary 本身在 JTDev 上，kernel 讀取記憶體映射頁面失敗，觸發 **SIGBUS**，進程 PID 80401 被殺死。
+本輪已完成兩條主線：
 
-Crash report：
-```
-/Users/johnsontam/Library/Logs/DiagnosticReports/cantoflow-2026-03-18-180653.ips
-ktriageinfo: "Object has no pager because the backing vnode was force unmounted"
-```
+1. 修正 macOS `LaunchAgent` one-shot 問題，改成由 `launchd` supervised 托管。
+2. 修正 global `cantoflow` 啟動器與雙 menubar 實例問題，確保啟動前先安全退出，再交由 `launchd` 或 app bundle 啟動。
 
-重啟後出現兩個連鎖問題，共修了三個 bug。
-
----
-
-## Bug 1 — STT 完全失效（exit 6 / Metal GPU crash）
-
-### 症狀
-每次錄音後 menu bar 顯示：
-```
-Error: STT failed: Transcription failed (exit 6):
-WARNING: Using native backtrace. Set GGML_BACKTRACE_LLDB...
-```
-`.out/` 有 WAV 錄音，但無對應 `raw_*.txt`，telemetry 無條目。
-
-### 根本原因
-硬碟強制斷線時，whisper-cli 子進程（正在使用 Metal GPU）被強殺，Metal GPU 指令佇列未能正常清理。之後每次 CantoFlow 啟動 whisper-cli 子進程，ggml Metal 初始化時 SIGABRT（exit 6）。
-
-從 terminal 直接執行 whisper-cli 正常，因為 shell session 與 app 的 Metal context 有別。
-
-### 修復
-**File**: `app/Sources/CantoFlowApp/Core/WhisperRunner.swift`
-
-在 `transcribe()` 加入 Metal crash fallback：
-```swift
-} catch WhisperError.transcriptionFailed(let code, _) where code == 6 && metalEnabled {
-    // Exit 6 = SIGABRT inside ggml — Metal GPU crash
-    WhisperRunner._metalSupported = false  // 此後用 CPU
-    runResult = try await runWhisper(..., metalEnabled: false)
-}
-```
-- Metal crash 時靜默切換 CPU 重試
-- 同時失效 Metal cache，本次進程後續錄音均用 CPU
-- 重啟 app 後會重新嘗試 Metal（自動恢復）
+目前使用者已確認：
+- `push-to-talk` (`F15`) 恢復正常
+- menubar 不再雙開
+- `cantoflow` 已使用新的「先 clean quit，再 launchd kickstart」流程
 
 ---
 
-## Bug 2 — 識別完全亂碼（Prompt 包含壞例子）
+## 已完成修復
 
-### 症狀
-STT 恢復後，識別輸出：`"TACSI TACSI CRCR、上不上頭"`（完全亂碼）
+### 1. LaunchAgent supervision
 
-### 根本原因
-`VocabularyStore.generateWhisperPrompt()` 的 prompt 包含：
-```
-例如「測試」絕對不要寫成「Thick see」
-```
-Whisper 的 initial_prompt 直接影響輸出分佈。Prompt 入面有 `Thick see` 呢個英文音譯例子，whisper 反而**學到**可以用英文音譯拼音輸出，說「測試測試」變成 `TACSI TACSI`。
+**問題**
+- 之前 `~/Library/LaunchAgents/com.cantoflow.launchagent.plist`
+  - `RunAtLoad = 1`
+  - `KeepAlive = 0`
+- 造成 app clean exit / abnormal exit 後都變成 one-shot，`launchctl print` 長時間停在 `not running`
 
-此 bug 在硬碟斷線前已存在，但被 Metal crash 掩蓋，今次才發現。
+**修復**
+- `LaunchAtLoginManager` 改成統一生成：
+  - stable wrapper: `~/Library/Application Support/CantoFlow/launchd-wrapper.sh`
+  - stable working dir: `~/Library/Application Support/CantoFlow`
+  - `ProgramArguments` 只指向上述 wrapper
+  - `KeepAlive = { SuccessfulExit = false }`
 
-### 修復
-**File**: `app/Sources/CantoFlowApp/Core/Vocabulary/VocabularyStore.swift`
+**原因**
+- `KeepAlive = true` 會連使用者手動 Quit 都強制拉起，UX 太差
+- `SuccessfulExit = false` 的行為更接近需要：
+  - `exit 0`：不重拉
+  - crash / SIGKILL / 非 0 退出：自動重拉
 
-```swift
-// 修改前
-var prompt = "這是一段香港廣東話錄音，請直接輸出繁體中文字，絕對不要輸出任何英文音譯拼音，例如「測試」絕對不要寫成「Thick see」。"
-
-// 修改後
-var prompt = "以下係廣東話句子，必須以繁體中文輸出。"
-```
+**實際驗證**
+- `kill -9` launchd 托管中的 app 後，`launchd` 成功自動拉起新 PID
+- `osascript -e 'tell application "CantoFlow" to quit'` 後，`launchctl print` 顯示 `last exit code = 0` 且 job 保持 `not running`
 
 ---
 
-## Bug 3 — Menu Bar 無法分辨 GPU / CPU 模式
+### 2. Global launcher / manual launch path
 
-### 症狀
-Menu Bar 只顯示 `上次: 17字 · STT 4.6s · 共 6.4s`，無法得知當次用 Metal GPU 定 CPU fallback。
+**問題**
+- 使用者真正執行的 global command 不是 repo 內 `app/scripts/run.sh`
+- 而是本機 `~/bin/cantoflow`
+- 舊版 `~/bin/cantoflow` 只是 `open -a "/Applications/CantoFlow.app"`，不會先關舊實例，也不會優先走 launchd supervision
 
-### 修復
-三個文件修改：
+**修復**
+- 本機 `~/bin/cantoflow` 已換成新 wrapper，行為是：
+  1. 記錄 `~/Library/Logs/CantoFlow.manual.log`
+  2. 若已有 CantoFlow instance，先 `osascript` 請 app clean quit
+  3. 最多等 5 秒，仍未退出才 `TERM` / `KILL`
+  4. 若已安裝 LaunchAgent 且無額外 args，執行
+     `launchctl kickstart -k gui/<uid>/com.cantoflow.launchagent`
+  5. 否則才 `open -n /Applications/CantoFlow.app --args ...`
 
-**`STTPipeline.swift`** — `PipelineResult` 加 `metalEnabled: Bool` 欄位：
-```swift
-struct PipelineResult {
-    ...
-    let metalEnabled: Bool
-}
-```
+**同步回 repo**
+- root `install.sh` 已更新，將來重裝時會重建同一套 `~/bin/cantoflow`
+- `INSTALL.md` 也已同步新做法
 
-**`STTPipeline.swift`** — `stopAndProcess()` 傳入值：
-```swift
-metalEnabled: sttResult.sttBreakdown?.metalEnabled ?? false
-```
+---
 
-**`MenuBarController.swift`** — `updateTelemetryItem()` 顯示標籤：
-```swift
-let accel = result.metalEnabled ? "GPU" : "CPU"
-let title = "上次: \(chars)字 · STT \(sttSec)s [\(accel)]\(polishLabel) · 共 \(totalSec)s"
-```
+### 3. 雙 menubar 問題
 
-效果：
-```
-上次: 17字 · STT 4.6s [GPU] · LLM 1.8s · 共 6.4s   ← 正常
-上次: 17字 · STT 28.3s [CPU] · LLM 1.8s · 共 30.1s  ← Metal fallback 中
+**根因**
+- 同時有兩個 app instance 在跑：
+  - 一個是手動 `open /Applications/CantoFlow.app`
+  - 一個是 `launchd` 托管的 `/Applications/CantoFlow.app/Contents/MacOS/cantoflow`
+
+**修復後狀態**
+- `cantoflow` 現在先 clean quit 舊 instance，再由 launchd kickstart
+- 使用者最新一次測試已只剩單一 PID
+
+手動 log 證據：
+```text
+[2026-03-26T23:38:51Z] manual-launch request
+[2026-03-26T23:38:51Z] request-clean-quit
+[2026-03-26T23:38:51Z] launch-via-launchd | label=com.cantoflow.launchagent
 ```
 
 ---
 
-## 現時狀態（2026-03-19 早上）
+### 4. F15 push-to-talk 一度失效
 
-| 項目 | 狀態 |
-|------|------|
-| CantoFlow 進程 | 運行中（每次啟動用 `cantoflow`） |
-| Metal GPU | ✅ 正常（最後一次確認 GPU，4.6s） |
-| STT 識別質量 | ✅ 正常（「試測試，收唔收到？1234」準確識別） |
-| LLM Polish | ✅ Qwen（`QWEN_API_KEY` 已設定） |
-| 事故來源 volume | JTDev（歷史事件；目前已不再作為運行路徑） |
-| Binary 位置 | `/Volumes/JT2TB/CantoFlow/app/.build/release/cantoflow` |
-| 啟動指令 | `cantoflow`（symlink → `app/scripts/run.sh`） |
+**根因**
+- 重新打包 / 重簽 `/Applications/CantoFlow.app` 後，macOS TCC 權限需要重新確認
+- log 明確顯示：
+  - `Warning: Failed to create CGEvent tap. Enable Accessibility + Input Monitoring.`
+  - `Warning: Failed to create learning hotkey event tap.`
 
----
+**處理**
+- 使用者重新授權後，`F15` 已恢復正常
 
-## 已知風險
-
-**Repo 如再次整體搬位** — `app` 與 `third_party/whisper.cpp` 的 build cache 可能殘留舊路徑，導致 Swift module cache 或 `whisper-cli` rpath 失效。現已在 launcher / install script 加入自動修復，但如有異常，優先重建 release binary 與 `whisper.cpp`。
+這不是 hotkey code regression，而是 TCC permission state 問題。
 
 ---
 
-## 本 Session 修改文件
+## 目前狀態
 
-| 文件 | 改動 |
-|------|------|
-| `app/Sources/CantoFlowApp/Core/WhisperRunner.swift` | Metal crash (exit 6) → 自動 CPU fallback + cache 失效 |
-| `app/Sources/CantoFlowApp/Core/Vocabulary/VocabularyStore.swift` | 移除 prompt 中的壞例子 `Thick see` |
-| `app/Sources/CantoFlowApp/Core/STTPipeline.swift` | `PipelineResult` 加 `metalEnabled`；model fallback 尊重 CPU state |
-| `app/Sources/CantoFlowApp/UI/MenuBarController.swift` | Menu bar 顯示 `[GPU]` / `[CPU]` 標籤 |
+截至 2026-03-27 07:58 HKT：
+
+- 最新 commit：`e437c9f`
+- commit message：`fix(macos): supervise app launch and harden launcher flow`
+- `launchd` supervision：✅ working
+- abnormal exit relaunch：✅ verified
+- clean quit no relaunch：✅ verified
+- global `cantoflow`：✅ 先 clean quit，再 supervised start
+- `F15` push-to-talk：✅ working
+- menubar duplicate instances：✅ resolved
+
+目前工作樹：
+- repo 內已 clean
+- 只剩未追蹤 `.claude/`
+
+---
+
+## 重要檔案
+
+- `app/Sources/CantoFlowApp/Utils/LaunchAtLoginManager.swift`
+- `app/Sources/CantoFlowApp/Utils/RuntimeHealthMonitor.swift`
+- `app/Sources/CantoFlowApp/AppDelegate.swift`
+- `app/Sources/CantoFlowApp/UI/MenuBarController.swift`
+- `app/Sources/CantoFlowApp/UI/Settings/SettingsWindowController.swift`
+- `app/scripts/run.sh`
+- `install.sh`
+- `INSTALL.md`
+
+本機運行相關：
+- `~/Library/LaunchAgents/com.cantoflow.launchagent.plist`
+- `~/Library/Application Support/CantoFlow/launchd-wrapper.sh`
+- `~/Library/Logs/CantoFlow.launchd.log`
+- `~/Library/Application Support/CantoFlow/runtime_health.log`
+- `~/Library/Logs/CantoFlow.manual.log`
+
+---
+
+## 建議後續觀察
+
+接下來先讓使用者試跑幾日，重點觀察：
+
+1. `launchd` 托管下，是否仍會無故掉線
+2. `runtime_health.log` 是否持續出現 unexpected exits
+3. `CantoFlow.launchd.log` 是否再出現 event tap / permission 相關錯誤
+4. 是否再出現雙開或手動啟動繞過 supervision 的情況
+
+若之後再出問題，先看兩份 log：
+
+```bash
+tail -n 50 ~/Library/Logs/CantoFlow.launchd.log
+tail -n 50 ~/Library/Application\ Support/CantoFlow/runtime_health.log
+```
+
+若是手動啟動流程問題，再加看：
+
+```bash
+tail -n 50 ~/Library/Logs/CantoFlow.manual.log
+```
+
+---
+
+## 下次接手時的最短檢查清單
+
+```bash
+git rev-parse --short HEAD
+launchctl print gui/$(id -u)/com.cantoflow.launchagent | sed -n '1,80p'
+ps -Ao pid=,ppid=,stat=,command= | rg '/Applications/CantoFlow.app/Contents/MacOS/cantoflow'
+tail -n 30 ~/Library/Logs/CantoFlow.launchd.log
+tail -n 30 ~/Library/Application\ Support/CantoFlow/runtime_health.log
+tail -n 30 ~/Library/Logs/CantoFlow.manual.log
+```
+
+預期：
+- 只有一個 CantoFlow PID
+- `launchd` job 若在跑，應顯示 `state = running`
+- clean quit 後 `last exit code = 0`
+- abnormal kill 後應被重拉

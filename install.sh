@@ -202,6 +202,20 @@ log_line() {
   } >> "${LOG_FILE}"
 }
 
+wait_for_app_pid() {
+  local deadline=$((SECONDS + 10))
+  local pid=""
+  while (( SECONDS < deadline )); do
+    pid="$(pgrep -n -f "${APP_BINARY}" || true)"
+    if [[ -n "${pid}" ]]; then
+      printf '%s\n' "${pid}"
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
 terminate_existing_instances() {
   local pids=()
   while IFS= read -r pid; do
@@ -267,11 +281,21 @@ safe_quit_existing_instances
 if [[ "$#" -eq 0 ]] && [[ -f "${LAUNCH_AGENT_PLIST}" ]]; then
   log_line "launch-via-launchd | label=${LAUNCH_AGENT_LABEL}"
   launchctl kickstart -k "gui/$(id -u)/${LAUNCH_AGENT_LABEL}"
+  if pid="$(wait_for_app_pid)"; then
+    echo "CantoFlow started via launchd (pid ${pid})"
+  else
+    echo "CantoFlow launch requested via launchd; app pid not observed yet"
+  fi
   exit 0
 fi
 
 log_line "launch-via-open"
 /usr/bin/open -n "${APP_BUNDLE}" --args "${BASE_ARGS[@]}" "$@"
+if pid="$(wait_for_app_pid)"; then
+  echo "CantoFlow started via app bundle (pid ${pid})"
+else
+  echo "CantoFlow open requested; app pid not observed yet"
+fi
 EOF
 python3 - <<'PY' "$CANTO_LAUNCHER" "$ROOT_DIR"
 from pathlib import Path
