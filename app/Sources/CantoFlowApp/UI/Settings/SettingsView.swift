@@ -795,6 +795,8 @@ struct APIKeysTab: View {
     @AppStorage("dashscopeAPIKey") private var dashscopeAPIKey: String = ""
     @AppStorage("qwenAPIKey") private var qwenAPIKey: String = ""
     @AppStorage("openaiAPIKey") private var openaiAPIKey: String = ""
+    @AppStorage("localLLMEndpoint") private var localLLMEndpoint: String = ""
+    @AppStorage("localLLMModel") private var localLLMModel: String = ""
     @State private var statusMessage: String = ""
     @State private var editingFieldID: String?
     @State private var testState: APIKeyTestState = .idle
@@ -832,6 +834,37 @@ struct APIKeysTab: View {
                         Text("Qwen polish 會用這個 key 去潤飾 Whisper 文字，並配合 vocabulary 做校正。建議填 DashScope key。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    }
+                }
+
+                GroupBox("本機 LLM（Ollama / LM Studio / llama.cpp）") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Endpoint URL")
+                                .font(.subheadline.weight(.medium))
+                            Text("LOCAL_LLM_ENDPOINT")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                            TextField("", text: $localLLMEndpoint, prompt: Text("http://localhost:11434/v1/chat/completions"))
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(.body, design: .monospaced))
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("模型名稱（可留空）")
+                                .font(.subheadline.weight(.medium))
+                            Text("LOCAL_LLM_MODEL")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                            TextField("", text: $localLLMModel, prompt: Text("e.g. gemma3:4b / qwen3:8b"))
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(.body, design: .monospaced))
+                        }
+
+                        Text("填入本機 LLM server 的 OpenAI-compatible endpoint，不需要 API key。Ollama 預設: http://localhost:11434/v1/chat/completions · 在 auto 模式中優先順序最低。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
 
@@ -878,6 +911,8 @@ struct APIKeysTab: View {
         .onChange(of: dashscopeAPIKey) { newVal in syncKeyToEnvFile(envVar: "DASHSCOPE_API_KEY", value: newVal) }
         .onChange(of: qwenAPIKey)      { newVal in syncKeyToEnvFile(envVar: "QWEN_API_KEY",      value: newVal) }
         .onChange(of: openaiAPIKey)    { newVal in syncKeyToEnvFile(envVar: "OPENAI_API_KEY",    value: newVal) }
+        .onChange(of: localLLMEndpoint){ newVal in syncKeyToEnvFile(envVar: "LOCAL_LLM_ENDPOINT", value: newVal) }
+        .onChange(of: localLLMModel)   { newVal in syncKeyToEnvFile(envVar: "LOCAL_LLM_MODEL",    value: newVal) }
     }
 
     @ViewBuilder
@@ -940,6 +975,8 @@ struct APIKeysTab: View {
         if let v = parsed["DASHSCOPE_API_KEY"] { dashscopeAPIKey = v }
         if let v = parsed["QWEN_API_KEY"]      { qwenAPIKey      = v }
         if let v = parsed["OPENAI_API_KEY"]    { openaiAPIKey    = v }
+        if let v = parsed["LOCAL_LLM_ENDPOINT"] { localLLMEndpoint = v }
+        if let v = parsed["LOCAL_LLM_MODEL"]    { localLLMModel    = v }
     }
 
     /// Write a single env var into ~/.cantoflow.env, preserving all other lines.

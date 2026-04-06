@@ -32,6 +32,7 @@ struct AppConfig {
         case openai
         case anthropic
         case qwen
+        case local
         case none
     }
 
@@ -238,7 +239,7 @@ struct AppConfig {
           --audio-device NAME     Audio input device name (default: MacBook Air Microphone)
           --whisper PATH          Path to whisper-cli binary
           --model PATH            Path to whisper model file
-          --polish-provider NAME  LLM provider: auto, gemini, openai, anthropic, qwen, none (default: auto)
+          --polish-provider NAME  LLM provider: auto, gemini, openai, anthropic, qwen, local, none (default: auto)
           --fast-ime              Enable fast IME mode (paste raw, then replace with polished)
           --no-fast-ime           Disable fast IME mode
           --auto-paste            Auto-paste transcribed text
@@ -257,6 +258,8 @@ struct AppConfig {
           OPENAI_API_KEY          OpenAI API key for text polishing
           ANTHROPIC_API_KEY       Anthropic API key for text polishing
           QWEN_API_KEY            Legacy alias for Qwen/DashScope API key
+          LOCAL_LLM_ENDPOINT      Local LLM endpoint URL (default: http://localhost:11434/v1/chat/completions)
+          LOCAL_LLM_MODEL         Local LLM model name (default: auto)
 
         Push-to-Talk:
           Hold Fn (MacBook) or F15 (external keyboard) to record.

@@ -153,6 +153,8 @@ final class TextPolisher {
             polishedText = try await callOpenAI(text: rawText)
         case .anthropic:
             polishedText = try await callAnthropic(text: rawText)
+        case .local:
+            polishedText = try await callLocal(text: rawText)
         case .auto, .none:
             throw PolishError.noAPIKey
         }
@@ -210,10 +212,12 @@ final class TextPolisher {
             return resolvedAPIKey(envVars: ["OPENAI_API_KEY"], userDefaultsKeys: ["openaiAPIKey"]) != nil ? .openai : .none
         case .anthropic:
             return resolvedAPIKey(envVars: ["ANTHROPIC_API_KEY"], userDefaultsKeys: ["anthropicAPIKey"]) != nil ? .anthropic : .none
+        case .local:
+            return resolvedLocalEndpoint() != nil ? .local : .none
         case .none:
             return .none
         case .auto:
-            // Priority: Gemini > Qwen > OpenAI > Anthropic
+            // Priority: Gemini > Qwen > OpenAI > Anthropic > Local
             if resolvedGeminiAPIKey() != nil {
                 return .gemini
             } else if resolvedQwenAPIKey() != nil {
@@ -222,6 +226,8 @@ final class TextPolisher {
                 return .openai
             } else if resolvedAPIKey(envVars: ["ANTHROPIC_API_KEY"], userDefaultsKeys: ["anthropicAPIKey"]) != nil {
                 return .anthropic
+            } else if resolvedLocalEndpoint() != nil {
+                return .local
             } else {
                 return .none
             }
@@ -497,6 +503,86 @@ final class TextPolisher {
             }
         }
 
+        guard !polished.isEmpty else {
+            throw PolishError.emptyResult
+        }
+
+        return polished
+    }
+
+    // MARK: - Local LLM (OpenAI-compatible: Ollama, LM Studio, llama.cpp, etc.)
+
+    /// Resolve the local LLM endpoint URL from env var or UserDefaults.
+    /// Returns nil if no endpoint is configured.
+    private func resolvedLocalEndpoint() -> String? {
+        if let envVal = ProcessInfo.processInfo.environment["LOCAL_LLM_ENDPOINT"],
+           !envVal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return envVal.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let stored = UserDefaults.standard.string(forKey: "localLLMEndpoint"),
+           !stored.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return stored.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
+    }
+
+    private func callLocal(text: String) async throws -> String {
+        guard let endpoint = resolvedLocalEndpoint(),
+              let url = URL(string: endpoint) else {
+            throw PolishError.noAPIKey
+        }
+
+        let model = ProcessInfo.processInfo.environment["LOCAL_LLM_MODEL"]
+            ?? UserDefaults.standard.string(forKey: "localLLMModel")
+            ?? ""
+        let systemPrompt = generateSystemPrompt()
+
+        var requestBody: [String: Any] = [
+            "temperature": 0.2,
+            "max_tokens": 1024,
+            "messages": [
+                ["role": "system", "content": systemPrompt],
+                ["role": "user", "content": generateUserPrompt(for: text)]
+            ]
+        ]
+        // Only include "model" if explicitly set — Ollama requires it, but some
+        // servers auto-select when omitted.
+        if !model.isEmpty {
+            requestBody["model"] = model
+        }
+
+        let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = jsonData
+        request.timeoutInterval = 30  // local models can be slower than cloud
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw PolishError.invalidResponse
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let error = errorJson["error"] as? [String: Any],
+               let message = error["message"] as? String {
+                throw PolishError.apiError(message)
+            }
+            throw PolishError.apiError("HTTP \(httpResponse.statusCode)")
+        }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = json["choices"] as? [[String: Any]],
+              let firstChoice = choices.first,
+              let message = firstChoice["message"] as? [String: Any],
+              let content = message["content"] as? String else {
+            throw PolishError.invalidResponse
+        }
+
+        let polished = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !polished.isEmpty else {
             throw PolishError.emptyResult
         }
