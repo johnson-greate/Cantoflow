@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import os
 
 /// Errors that can occur during audio capture
 enum AudioCaptureError: Error, LocalizedError {
@@ -27,6 +28,11 @@ final class AudioCapture {
     private var isRecording = false
     private var recordingURL: URL?
     private(set) var activeInputDeviceName: String?
+
+    /// Protects `audioFile` access between the audio tap callback (real-time thread)
+    /// and `stopRecording()` (main thread). Without this lock, setting `audioFile = nil`
+    /// on the main thread races with `audioFile.write()` on the tap callback thread.
+    private var audioFileLock = os_unfair_lock()
 
     /// Callback for real-time audio level updates (normalized 0.0 to 1.0)
     var onAudioLevelUpdate: ((Float) -> Void)?
@@ -115,7 +121,12 @@ final class AudioCapture {
         // Large enough to avoid drop-outs under load; small enough for responsive waveform updates.
         var converter: AVAudioConverter? = nil
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self] buffer, _ in
-            guard let self = self, let audioFile = self.audioFile else { return }
+            guard let self = self else { return }
+            // Early exit if recording already stopped (avoid unnecessary work)
+            os_unfair_lock_lock(&self.audioFileLock)
+            let hasFile = self.audioFile != nil
+            os_unfair_lock_unlock(&self.audioFileLock)
+            guard hasFile else { return }
 
             // Calculate audio level for waveform visualization
             if let channelData = buffer.floatChannelData?[0] {
@@ -160,9 +171,13 @@ final class AudioCapture {
 
             guard status != .error else { return }
 
-            // Write to file
+            // Write to file under lock — stopRecording() may nil audioFile concurrently
+            os_unfair_lock_lock(&self.audioFileLock)
+            let file = self.audioFile
+            os_unfair_lock_unlock(&self.audioFileLock)
+            guard let file = file else { return }
             do {
-                try audioFile.write(from: convertedBuffer)
+                try file.write(from: convertedBuffer)
             } catch {
                 print("AudioCapture: Failed to write buffer: \(error)")
             }
@@ -187,8 +202,10 @@ final class AudioCapture {
         audioEngine.stop()
         audioEngine.inputNode.removeTap(onBus: 0)
 
-        // Close the audio file
+        // Close the audio file under lock — tap callback may still reference it
+        os_unfair_lock_lock(&audioFileLock)
         audioFile = nil
+        os_unfair_lock_unlock(&audioFileLock)
         isRecording = false
 
         guard let url = recordingURL else {
@@ -211,7 +228,9 @@ final class AudioCapture {
                 try? FileManager.default.removeItem(at: url)
             }
             recordingURL = nil
+            os_unfair_lock_lock(&audioFileLock)
             audioFile = nil
+            os_unfair_lock_unlock(&audioFileLock)
         }
     }
 

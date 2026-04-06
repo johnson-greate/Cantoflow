@@ -150,7 +150,7 @@ final class PushToTalkManager {
             },
             userInfo: refcon
         ) else {
-            NotificationManager.shared.notify("Failed to setup hotkey. Enable Accessibility + Input Monitoring.")
+            NotificationManager.shared.notify("快捷鍵設定失敗，請在系統設定中開啟「輔助使用」及「輸入監控」權限。")
             print("Warning: Failed to create CGEvent tap. Enable Accessibility + Input Monitoring.")
             return
         }

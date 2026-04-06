@@ -86,12 +86,12 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
 
     private func setupMenu() {
         // ── Usage hint ─────────────────────────────────────────────────────────
-        let hint = NSMenuItem(title: "Hold Fn or F15 to record", action: nil, keyEquivalent: "")
+        let hint = NSMenuItem(title: "按住 Fn 或 F15 錄音", action: nil, keyEquivalent: "")
         hint.isEnabled = false
         menu.addItem(hint)
         hintItem = hint
 
-        let inputDevice = NSMenuItem(title: "Input: \(AudioDeviceManager.shared.currentSelectionDisplayName())", action: nil, keyEquivalent: "")
+        let inputDevice = NSMenuItem(title: "輸入: \(AudioDeviceManager.shared.currentSelectionDisplayName())", action: nil, keyEquivalent: "")
         inputDevice.isEnabled = false
         menu.addItem(inputDevice)
         inputDeviceItem = inputDevice
@@ -100,7 +100,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
 
         // ── Recording control (most prominent) ─────────────────────────────────
         let toggle = NSMenuItem(
-            title: "Start Recording",
+            title: "開始錄音",
             action: #selector(toggleRecordingFromMenu),
             keyEquivalent: "r"
         )
@@ -108,7 +108,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         toggle.image = menuImage("mic.fill")
         menu.addItem(toggle)
         toggleItem = toggle
-        applyBoldTitle("Start Recording", to: toggle)
+        applyBoldTitle("開始錄音", to: toggle)
 
         menu.addItem(.separator())
 
@@ -124,7 +124,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         runtimeStatusItem = runtimeStatus
         
         let copyResult = NSMenuItem(
-            title: "Copy Last Result",
+            title: "複製上次結果",
             action: #selector(copyLastResultToClipboard),
             keyEquivalent: "c"
         )
@@ -140,7 +140,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         learningStatusItem = learningStatus
 
         let learnSelection = NSMenuItem(
-            title: "Learn Selected Text",
+            title: "學習選中文字",
             action: #selector(learnSelectedText),
             keyEquivalent: "l"
         )
@@ -152,7 +152,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
 
         // ── Settings & utilities ───────────────────────────────────────────────
         let settings = NSMenuItem(
-            title: "Settings...",
+            title: "設定...",
             action: #selector(openSettings),
             keyEquivalent: ","
         )
@@ -161,7 +161,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         menu.addItem(settings)
 
         let openOut = NSMenuItem(
-            title: "Open Output Folder",
+            title: "打開輸出資料夾",
             action: #selector(openOutputFolder),
             keyEquivalent: ""
         )
@@ -170,7 +170,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         menu.addItem(openOut)
 
         let openRuntimeLog = NSMenuItem(
-            title: "Open Runtime Log",
+            title: "打開運行日誌",
             action: #selector(openRuntimeLog),
             keyEquivalent: ""
         )
@@ -182,7 +182,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
 
         // ── Quit ───────────────────────────────────────────────────────────────
         let quit = NSMenuItem(
-            title: "Quit CantoFlow",
+            title: "結束 CantoFlow",
             action: #selector(quitApp),
             keyEquivalent: "q"
         )
@@ -191,7 +191,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
 
         // Version info (disabled, display only) — dynamic: binary mtime yyyyMMdd.HHmm
         let versionItem = NSMenuItem(
-            title: "Version \(appBuildVersion)",
+            title: "版本 \(appBuildVersion)",
             action: nil,
             keyEquivalent: ""
         )
@@ -220,11 +220,11 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
     // MARK: - Telemetry & Display Update
 
     func updateHint(keyName: String) {
-        hintItem?.title = "Hold \(keyName) to record · Press F14 to learn"
+        hintItem?.title = "按住 \(keyName) 錄音 · 按 F14 學習"
     }
 
     func updateInputDevice(name: String) {
-        inputDeviceItem?.title = "Input: \(name)"
+        inputDeviceItem?.title = "輸入: \(name)"
     }
 
     func updateRuntimeStatus(launchesToday: Int, restartsToday: Int, previousExitSummary: String) {
@@ -264,11 +264,11 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
             symbolName = "mic.fill"
             tint = nil
         case .recording:
-            title = " REC"
+            title = " 錄音中"
             symbolName = "record.circle.fill"
             tint = NSColor.systemRed
         case .processing:
-            title = " ..."
+            title = " 處理中"
             symbolName = "hourglass.circle.fill"
             tint = NSColor.systemOrange
         }
@@ -281,14 +281,14 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         switch state {
         case .idle:
             toggleItem?.image = menuImage("mic.fill")
-            if let item = toggleItem { applyBoldTitle("Start Recording", to: item) }
+            if let item = toggleItem { applyBoldTitle("開始錄音", to: item) }
         case .recording:
             toggleItem?.attributedTitle = nil
-            toggleItem?.title = "Stop Recording"
+            toggleItem?.title = "停止錄音"
             toggleItem?.image = menuImage("stop.circle.fill")
         case .processing:
             toggleItem?.attributedTitle = nil
-            toggleItem?.title = "Processing..."
+            toggleItem?.title = "處理中..."
             toggleItem?.image = nil
         }
     }
@@ -344,7 +344,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         pasteboard.setString(text, forType: .string)
         
         let preview = text.count > 15 ? text.prefix(15) + "..." : text
-        NotificationManager.shared.notify("Copied: \(preview)")
+        NotificationManager.shared.notify("已複製: \(preview)")
     }
 
     @MainActor @objc private func learnSelectedText() {
@@ -442,7 +442,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
                 if granted {
                     self?.startRecordingNow()
                 } else {
-                    NotificationManager.shared.notify("Microphone permission denied.")
+                    NotificationManager.shared.notify("麥克風權限被拒絕，請在系統設定中開啟。")
                 }
             }
         }
@@ -462,7 +462,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
             state = .recording
             showRecordingOverlay()
         } catch {
-            NotificationManager.shared.notifyError("Failed to start recording: \(error.localizedDescription)")
+            NotificationManager.shared.notifyError("錄音啟動失敗: \(error.localizedDescription)")
             state = .idle
         }
     }
@@ -495,7 +495,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
                     self.hideOverlay()
                     switch error {
                     case .recordingTooShort(let ms):
-                        NotificationManager.shared.notify("Recording too short (\(ms)ms). Hold for at least 0.3s.")
+                        NotificationManager.shared.notify("錄音太短（\(ms)ms），請按住至少 0.3 秒。")
                     default:
                         NotificationManager.shared.notifyError(error.localizedDescription)
                     }
@@ -542,7 +542,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
 
     func pushToTalkDidLoseEventTap() {
         NotificationManager.shared.notifyError(
-            "Hotkey listener stopped responding. Please restart CantoFlow. If this persists, re-enable Accessibility + Input Monitoring in System Settings."
+            "快捷鍵監聽已失效，請重新啟動 CantoFlow。如持續出現，請到系統設定重新開啟「輔助使用」及「輸入監控」權限。"
         )
     }
 }

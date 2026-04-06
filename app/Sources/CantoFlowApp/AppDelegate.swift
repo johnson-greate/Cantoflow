@@ -116,7 +116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pipeline?.requestMicrophonePermission { granted in
             DispatchQueue.main.async {
                 guard granted else {
-                    NotificationManager.shared.notify("Microphone permission denied. Please enable in System Settings.")
+                    NotificationManager.shared.notify("麥克風權限被拒絕，請在系統設定中開啟。")
                     return
                 }
 
@@ -124,8 +124,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let checks = self.startupHealthChecks()
                 let inputDevice = AudioDeviceManager.shared.currentSelectionDisplayName()
                 let summary = checks.isEmpty
-                    ? "CantoFlow ready. Hold \(keyName) to record. Input: \(inputDevice)"
-                    : "Startup checks: " + checks.joined(separator: " | ")
+                    ? "CantoFlow 已就緒。按住 \(keyName) 錄音。輸入: \(inputDevice)"
+                    : "啟動檢查: " + checks.joined(separator: " | ")
 
                 NotificationManager.shared.notify(summary)
                 if runtimeSummary.previousExitWasUnexpected {
@@ -149,24 +149,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let fm = FileManager.default
 
         if !AXIsProcessTrusted() {
-            checks.append("Accessibility not granted")
+            checks.append("輔助使用權限未授予")
         }
 
         if !(pushToTalkManager?.isRunning ?? false) {
-            checks.append("Hotkey listener unavailable; enable Input Monitoring")
+            checks.append("快捷鍵監聽不可用，請開啟輸入監控權限")
         }
 
         if !fm.isExecutableFile(atPath: config.whisperCLI.path) {
-            checks.append("Missing whisper-cli at \(config.whisperCLI.lastPathComponent)")
+            checks.append("找不到 whisper-cli: \(config.whisperCLI.lastPathComponent)")
         }
 
         let preferredModel = config.resolveModelPath()
         if !fm.fileExists(atPath: preferredModel.path) {
-            checks.append("Missing model \(preferredModel.lastPathComponent)")
+            checks.append("找不到模型: \(preferredModel.lastPathComponent)")
         }
 
         if AudioDeviceManager.shared.resolvedInputDevice() == nil {
-            checks.append("No audio input device detected")
+            checks.append("未偵測到音訊輸入裝置")
         }
 
         return checks

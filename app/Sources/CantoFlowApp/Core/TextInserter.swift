@@ -49,6 +49,10 @@ final class TextInserter {
 
     private let clipboardGuard = ClipboardGuard()
 
+    /// Tracks the pending clipboard restore so it can be cancelled if a new
+    /// paste cycle starts before the previous restore fires.
+    private var restoreTask: Task<Void, Never>?
+
     /// Insert text into the focused application (AX API first, clipboard fallback)
     @discardableResult
     func insert(text: String) async -> InsertionResult {
@@ -62,6 +66,11 @@ final class TextInserter {
     /// Async so we can yield the main thread during the 50ms clipboard-ready delay
     /// instead of blocking it with Thread.sleep.
     func insertViaClipboard(text: String) async -> InsertionResult {
+        // Cancel any pending restore from a previous paste cycle so it doesn't
+        // overwrite the clipboard we're about to set for this new paste.
+        restoreTask?.cancel()
+        restoreTask = nil
+
         clipboardGuard.save()
 
         let pasteboard = NSPasteboard.general
@@ -75,8 +84,9 @@ final class TextInserter {
 
         // Restore clipboard after a delay long enough for the paste to complete.
         // CGEvent posting is asynchronous; some apps take 500 ms+.
-        Task { @MainActor [weak self] in
+        restoreTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: kClipboardRestoreNs)
+            guard !Task.isCancelled else { return }
             self?.clipboardGuard.restore()
         }
 

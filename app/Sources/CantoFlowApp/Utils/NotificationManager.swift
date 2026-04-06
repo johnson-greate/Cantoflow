@@ -31,11 +31,12 @@ final class NotificationManager {
 
     /// Show an error notification
     func notifyError(_ message: String) {
-        notify("Error: \(message)")
+        notify("錯誤: \(message)")
     }
 
     /// Show a success notification with latency info
     func notifySuccess(recordMs: Int, sttMs: Int, polishMs: Int) {
-        notify("Done. record=\(recordMs)ms stt=\(sttMs)ms polish=\(polishMs)ms")
+        let total = recordMs + sttMs + polishMs
+        notify("完成。錄音 \(recordMs)ms · 辨識 \(sttMs)ms · 潤飾 \(polishMs)ms · 共 \(total)ms")
     }
 }

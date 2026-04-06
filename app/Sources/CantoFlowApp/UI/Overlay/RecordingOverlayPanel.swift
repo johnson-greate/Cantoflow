@@ -196,7 +196,7 @@ final class RecordingOverlayPanel: NSPanel {
             waveformView.setMode(.live)
 
         case .transcribing:
-            statusLabel.stringValue = "Transcribing..."
+            statusLabel.stringValue = "語音辨識中..."
             statusLabel.isHidden = false
             waveformView.isHidden = false
             cancelButton.isEnabled = false
@@ -205,7 +205,7 @@ final class RecordingOverlayPanel: NSPanel {
             waveformView.setMode(.processing)
 
         case .polishing:
-            statusLabel.stringValue = "Polishing..."
+            statusLabel.stringValue = "潤飾中..."
             statusLabel.isHidden = false
             waveformView.isHidden = false
             cancelButton.isEnabled = false
@@ -214,7 +214,7 @@ final class RecordingOverlayPanel: NSPanel {
             waveformView.setMode(.processing)
 
         case .complete:
-            statusLabel.stringValue = "✓ Done"
+            statusLabel.stringValue = "✓ 完成"
             statusLabel.isHidden = false
             waveformView.isHidden = true
             cancelButton.isEnabled = false
