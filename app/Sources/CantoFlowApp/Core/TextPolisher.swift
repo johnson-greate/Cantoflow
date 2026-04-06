@@ -270,6 +270,7 @@ final class TextPolisher {
         request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = jsonData
+        request.timeoutInterval = 10
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
@@ -335,6 +336,7 @@ final class TextPolisher {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = jsonData
+        request.timeoutInterval = 10
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
@@ -394,6 +396,7 @@ final class TextPolisher {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = jsonData
+        request.timeoutInterval = 10
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
@@ -462,6 +465,7 @@ final class TextPolisher {
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = jsonData
+        request.timeoutInterval = 10
 
         let (data, response) = try await URLSession.shared.data(for: request)
 

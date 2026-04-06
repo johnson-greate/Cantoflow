@@ -539,4 +539,10 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
     func pushToTalkStateDidChange(_ state: PushToTalkState) {
         // Additional state change handling if needed
     }
+
+    func pushToTalkDidLoseEventTap() {
+        NotificationManager.shared.notifyError(
+            "Hotkey listener stopped responding. Please restart CantoFlow. If this persists, re-enable Accessibility + Input Monitoring in System Settings."
+        )
+    }
 }

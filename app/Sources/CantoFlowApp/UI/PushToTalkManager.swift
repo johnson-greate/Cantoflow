@@ -58,6 +58,7 @@ protocol PushToTalkDelegate: AnyObject {
     func pushToTalkDidStopRecording(duration: TimeInterval)
     func pushToTalkDidCancel(reason: String)
     func pushToTalkStateDidChange(_ state: PushToTalkState)
+    func pushToTalkDidLoseEventTap()
 }
 
 /// Manages push-to-talk functionality with support for multiple trigger keys
@@ -67,6 +68,14 @@ final class PushToTalkManager {
 
     private var triggerKeyDown = false
     private var recordingStartTime: Date?
+
+    /// Cancellable timer for max recording duration (5 min).
+    /// Cancelled on every state exit from .recording.
+    private var maxDurationWorkItem: DispatchWorkItem?
+
+    /// Cancellable timer for cancelled→idle transition (0.3s).
+    /// Cancelled if a new recording starts before it fires.
+    private var cancelledIdleWorkItem: DispatchWorkItem?
 
     weak var delegate: PushToTalkDelegate?
 
@@ -132,9 +141,7 @@ final class PushToTalkManager {
 
                 // Re-enable tap if it was disabled
                 if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-                    if let tap = manager.eventTap {
-                        CGEvent.tapEnable(tap: tap, enable: true)
-                    }
+                    manager.reEnableEventTap()
                     return Unmanaged.passUnretained(event)
                 }
 
@@ -162,6 +169,12 @@ final class PushToTalkManager {
 
     /// Stop listening for the trigger key
     func stop() {
+        // Cancel any pending timers
+        maxDurationWorkItem?.cancel()
+        maxDurationWorkItem = nil
+        cancelledIdleWorkItem?.cancel()
+        cancelledIdleWorkItem = nil
+
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
             eventTap = nil
@@ -173,6 +186,40 @@ final class PushToTalkManager {
         }
 
         isRunning = false
+    }
+
+    /// Attempt to re-enable the event tap with retries.
+    /// Called from the event tap callback when macOS disables the tap.
+    private func reEnableEventTap() {
+        guard let tap = eventTap else {
+            isRunning = false
+            delegate?.pushToTalkDidLoseEventTap()
+            return
+        }
+
+        // Try up to 3 times with a short delay between attempts
+        for attempt in 1...3 {
+            CGEvent.tapEnable(tap: tap, enable: true)
+
+            // Verify the tap is actually enabled
+            if CGEvent.tapIsEnabled(tap: tap) {
+                if attempt > 1 {
+                    print("[PushToTalk] Event tap re-enabled after \(attempt) attempts")
+                }
+                return
+            }
+
+            if attempt < 3 {
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+        }
+
+        // All retries failed — notify user
+        print("[PushToTalk] ERROR: Failed to re-enable event tap after 3 attempts")
+        isRunning = false
+        DispatchQueue.main.async { [weak self] in
+            self?.delegate?.pushToTalkDidLoseEventTap()
+        }
     }
 
     /// Handle keyboard event
@@ -222,6 +269,10 @@ final class PushToTalkManager {
     private func handleKeyDown() {
         guard case .idle = state else { return }
 
+        // Cancel any leftover timers from a previous cycle
+        maxDurationWorkItem?.cancel()
+        cancelledIdleWorkItem?.cancel()
+
         recordingStartTime = Date()
         state = .recording(startTime: recordingStartTime!)
 
@@ -229,18 +280,24 @@ final class PushToTalkManager {
             self?.delegate?.pushToTalkDidStartRecording()
         }
 
-        // Set up max duration timer
-        DispatchQueue.main.asyncAfter(deadline: .now() + maxRecordingDuration) { [weak self] in
+        // Set up cancellable max duration timer
+        let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
             if case .recording = self.state {
                 self.handleKeyUp()
             }
         }
+        maxDurationWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + maxRecordingDuration, execute: workItem)
     }
 
     /// Handle key up event
     private func handleKeyUp() {
         guard case .recording(let startTime) = state else { return }
+
+        // Recording ended — cancel the max-duration timer
+        maxDurationWorkItem?.cancel()
+        maxDurationWorkItem = nil
 
         let duration = Date().timeIntervalSince(startTime)
         recordingStartTime = nil
@@ -251,10 +308,12 @@ final class PushToTalkManager {
             DispatchQueue.main.async { [weak self] in
                 self?.delegate?.pushToTalkDidCancel(reason: "Hold too short (\(Int(duration * 1000))ms)")
             }
-            // Reset to idle after a short delay
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            // Cancellable reset to idle after a short delay
+            let workItem = DispatchWorkItem { [weak self] in
                 self?.state = .idle
             }
+            cancelledIdleWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: workItem)
         } else {
             // Valid recording
             state = .processing
@@ -266,19 +325,31 @@ final class PushToTalkManager {
 
     /// Mark processing as complete, return to idle
     func markProcessingComplete() {
+        // Cancel any stale timers before returning to idle
+        maxDurationWorkItem?.cancel()
+        maxDurationWorkItem = nil
+        cancelledIdleWorkItem?.cancel()
+        cancelledIdleWorkItem = nil
+
         state = .idle
     }
 
     /// Cancel current recording
     func cancelRecording() {
         guard case .recording = state else { return }
+
+        maxDurationWorkItem?.cancel()
+        maxDurationWorkItem = nil
+
         state = .cancelled
         triggerKeyDown = false
         recordingStartTime = nil
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+        let workItem = DispatchWorkItem { [weak self] in
             self?.state = .idle
         }
+        cancelledIdleWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: workItem)
     }
 
     /// Get recording duration (if currently recording)
