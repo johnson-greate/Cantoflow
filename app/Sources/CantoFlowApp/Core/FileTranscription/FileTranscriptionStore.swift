@@ -15,6 +15,7 @@ final class FileTranscriptionStore: ObservableObject {
     private let workspace = TranscriptionWorkspace()
     private let paths = ASRRuntimePaths()
     private let audioPrep = AudioPreparationService()
+    private lazy var notesGenerator = MeetingNotesGenerator(client: LLMCompletionClient(config: config))
 
     private var runner: FileTranscriptionRunner?
     private var currentBatchID: UUID?
@@ -108,6 +109,57 @@ final class FileTranscriptionStore: ObservableObject {
             items[idx].status = .queued
         default:
             break
+        }
+    }
+
+    // MARK: - Meeting notes (FR-060..069)
+
+    var notesAvailable: Bool { notesGenerator.isAvailable() }
+    var notesProvider: AppConfig.PolishProvider { notesGenerator.resolvedProvider() }
+
+    func generateNotes(_ id: UUID) {
+        guard let idx = items.firstIndex(where: { $0.id == id }) else { return }
+        let item = items[idx]
+        guard item.status.hasTranscript, let transcriptURL = item.transcriptURL,
+              let transcript = try? String(contentsOf: transcriptURL, encoding: .utf8),
+              !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            statusMessage = "未辨識到語音內容，無法生成會議記錄"
+            return
+        }
+
+        let previousStatus = item.status   // restored on failure (keeps old notes)
+        let source = item.sourceURL
+        let recordingDate = (try? source.resourceValues(forKeys: [.creationDateKey]))?.creationDate
+        items[idx].status = .generatingNotes
+        statusMessage = ""
+
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await self.notesGenerator.generate(
+                    transcript: transcript, filename: source.lastPathComponent, recordingDate: recordingDate
+                )
+                // Atomic replace of the internal notes file (FR-069).
+                let notesDir = transcriptURL.deletingLastPathComponent()
+                    .deletingLastPathComponent()
+                    .appendingPathComponent("notes", isDirectory: true)
+                try? FileManager.default.createDirectory(at: notesDir, withIntermediateDirectories: true)
+                let notesURL = notesDir.appendingPathComponent(
+                    TranscriptionWorkspace.notesBasename(forSource: source) + ".md"
+                )
+                try self.workspace.atomicWrite(result.markdown, to: notesURL)
+
+                guard let i = self.items.firstIndex(where: { $0.id == id }) else { return }
+                self.items[i].meetingNotesURL = notesURL
+                self.items[i].status = result.formatWarning
+                    ? .completedWithWarning("會議記錄格式可能不完整")
+                    : .complete
+            } catch {
+                // Keep any previous notes; just restore status + surface error.
+                guard let i = self.items.firstIndex(where: { $0.id == id }) else { return }
+                self.items[i].status = previousStatus
+                self.statusMessage = (error as? LocalizedError)?.errorDescription ?? "生成會議記錄失敗"
+            }
         }
     }
 

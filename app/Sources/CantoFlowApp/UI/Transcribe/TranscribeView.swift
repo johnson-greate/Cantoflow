@@ -17,7 +17,7 @@ struct TranscribeView: View {
             HSplitView {
                 TranscriptionQueueView(store: store, selectedID: $selectedID)
                     .frame(minWidth: 220, idealWidth: 280, maxWidth: 380)
-                TranscriptDetailView(item: selectedItem)
+                TranscriptDetailView(store: store, item: selectedItem)
                     .frame(minWidth: 380, maxWidth: .infinity)
             }
             Divider()
