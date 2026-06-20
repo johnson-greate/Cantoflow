@@ -73,7 +73,14 @@ install_qwen() {
     echo "Installing Qwen3-ASR MLX runtime…"
     "$UV" pip install --python "$PYTHON" "mlx-qwen3-asr==0.3.5"
 
-    if [[ -f "$QWEN_DIR/config.json" ]] && find "$QWEN_DIR" -maxdepth 1 -name '*.safetensors' -print -quit | grep -q .; then
+    # Treat as installed only when BOTH the 8-bit checkpoint AND the base HF
+    # snapshot are present — mlx_qwen3_asr.load_model still resolves the base repo
+    # ("Qwen/Qwen3-ASR-0.6B") via the local HF cache at runtime, so the snapshot
+    # must stay. (Earlier builds deleted it, which broke offline loading with
+    # "Cannot find an appropriate cached snapshot folder".)
+    if [[ -f "$QWEN_DIR/config.json" ]] \
+        && find "$QWEN_DIR" -maxdepth 1 -name '*.safetensors' -print -quit | grep -q . \
+        && [[ -d "$HF_HOME/hub/models--Qwen--Qwen3-ASR-0.6B" ]]; then
         echo "Qwen3-ASR 0.6B 8-bit is already installed."
         return
     fi
@@ -85,10 +92,10 @@ install_qwen() {
         --group-size 64 \
         --output-dir "$QWEN_DIR"
 
-    # The converted checkpoint is self-contained. Remove the temporary fp16
-    # Hugging Face snapshot so a 959 MB runtime does not keep ~1.8 GB of source
-    # weights beside it.
-    rm -rf "$HF_HOME/hub/models--Qwen--Qwen3-ASR-0.6B"
+    # IMPORTANT: keep the base HF snapshot under $HF_HOME — runtime load_model
+    # needs it (offline). It lives inside the app's asr-runtime so it is local,
+    # always-present, and independent of the user's global HF cache (which may be
+    # on a removable volume).
 }
 
 install_common

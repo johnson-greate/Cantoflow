@@ -68,7 +68,8 @@ struct ASRRuntimePaths {
     /// first-run fetch (works offline for students).
     var offlineModelEnvironment: [String: String] {
         var env = ProcessInfo.processInfo.environment
-        let hfHome = root.appendingPathComponent("hf-home", isDirectory: true).path
+        // Must match install-local-asr.sh's HF_HOME so the bundled snapshot is found.
+        let hfHome = root.appendingPathComponent("cache/huggingface", isDirectory: true).path
         env["HF_HUB_OFFLINE"] = "1"
         env["TRANSFORMERS_OFFLINE"] = "1"
         env["HF_HUB_DISABLE_TELEMETRY"] = "1"
