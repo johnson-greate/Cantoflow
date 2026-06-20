@@ -1,0 +1,32 @@
+included:
+  - Sources
+
+excluded:
+  - .build
+  - Sources/CantoFlowApp/Resources
+
+# 務實 baseline — 容許現有風格，主要捉真正問題
+disabled_rules:
+  - line_length
+  - todo
+  - trailing_whitespace
+  - function_body_length
+  - type_body_length
+  - file_length
+  - cyclomatic_complexity
+
+opt_in_rules:
+  - empty_count
+  - force_unwrapping
+  - unused_import
+
+force_cast: warning
+force_try: warning
+force_unwrapping: warning
+
+identifier_name:
+  min_length: 1
+  max_length: 60
+
+type_name:
+  max_length: 60
