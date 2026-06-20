@@ -100,6 +100,18 @@ struct AppConfig {
         return projectCopy
     }
 
+    /// Batch file-transcription worker (separate from the push-to-talk bridge).
+    var fileTranscriptionWorker: URL {
+        let projectCopy = projectRoot.appendingPathComponent("scripts/file_transcription_worker.py")
+        if FileManager.default.fileExists(atPath: projectCopy.path) {
+            return projectCopy
+        }
+        if let resources = Bundle.main.resourceURL {
+            return resources.appendingPathComponent("asr/file_transcription_worker.py")
+        }
+        return projectCopy
+    }
+
     var whisperCLI: URL {
         if let path = whisperPath {
             return URL(fileURLWithPath: path)

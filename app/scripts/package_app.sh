@@ -36,6 +36,7 @@ cp "${PROJECT_DIR}/Resources/AppIcon.icns" "${RESOURCES_DIR}/AppIcon.icns"
 # when CantoFlow.app is launched directly instead of from a source checkout.
 cp "$(dirname "${PROJECT_DIR}")/scripts/local_asr_bridge.py" "${RESOURCES_DIR}/asr/"
 cp "$(dirname "${PROJECT_DIR}")/scripts/prepare_qwen3_asr.py" "${RESOURCES_DIR}/asr/"
+cp "$(dirname "${PROJECT_DIR}")/scripts/file_transcription_worker.py" "${RESOURCES_DIR}/asr/"
 cp "$(dirname "${PROJECT_DIR}")/scripts/install-local-asr.sh" "${RESOURCES_DIR}/asr/"
 chmod +x "${RESOURCES_DIR}/asr/"*.py "${RESOURCES_DIR}/asr/"*.sh
 
