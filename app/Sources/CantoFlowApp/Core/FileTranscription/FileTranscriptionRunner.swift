@@ -96,6 +96,7 @@ final class FileTranscriptionRunner {
         let modelDirURL: URL
         let outputDirURL: URL
         let traditional: Bool
+        var environment: [String: String]? = nil
     }
 
     enum RunnerError: Error, LocalizedError {
@@ -138,6 +139,7 @@ final class FileTranscriptionRunner {
         ]
         if config.traditional { args.append("--traditional") }
         process.arguments = args
+        if let environment = config.environment { process.environment = environment }
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()

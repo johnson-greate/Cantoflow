@@ -139,7 +139,8 @@ final class LocalASRRunner {
     }
 
     private func runProcess(executable: URL, arguments: [String]) async throws -> ProcessResult {
-        try await withCheckedThrowingContinuation { continuation in
+        let environment = paths.offlineModelEnvironment
+        return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let process = Process()
                 process.executableURL = executable
@@ -147,6 +148,9 @@ final class LocalASRRunner {
                 // Avoid inheriting a restricted-volume CWD (e.g. /Volumes/JTDev),
                 // which makes Python abort on os.getcwd() with a permission error.
                 process.currentDirectoryURL = FileManager.default.temporaryDirectory
+                // Force fully-local model loading (no HF Hub access / cache on an
+                // unplugged external volume; also skips the slow first-run fetch).
+                process.environment = environment
 
                 let outputPipe = Pipe()
                 process.standardOutput = outputPipe

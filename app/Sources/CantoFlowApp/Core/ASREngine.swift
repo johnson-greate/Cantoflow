@@ -59,6 +59,23 @@ struct ASRRuntimePaths {
 
     var python: URL { root.appendingPathComponent("venv/bin/python3") }
     var modelsDirectory: URL { root.appendingPathComponent("models", isDirectory: true) }
+
+    /// Environment that forces fully-local model loading. Without this,
+    /// `mlx_qwen3_asr.load_model` still contacts the HuggingFace Hub even when
+    /// given a local model dir — and if the user's HF cache lives on an unplugged
+    /// external volume (e.g. /Volumes/JTDev) that aborts with a permission error.
+    /// Also keeps any HF cache inside our own runtime dir and skips the slow
+    /// first-run fetch (works offline for students).
+    var offlineModelEnvironment: [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        let hfHome = root.appendingPathComponent("hf-home", isDirectory: true).path
+        env["HF_HUB_OFFLINE"] = "1"
+        env["TRANSFORMERS_OFFLINE"] = "1"
+        env["HF_HUB_DISABLE_TELEMETRY"] = "1"
+        env["HF_HOME"] = hfHome
+        env["HUGGINGFACE_HUB_CACHE"] = hfHome + "/hub"
+        return env
+    }
     var senseVoiceDirectory: URL { modelsDirectory.appendingPathComponent(Self.senseVoiceDirectoryName, isDirectory: true) }
     var senseVoiceModel: URL { senseVoiceDirectory.appendingPathComponent("model.int8.onnx") }
     var senseVoiceTokens: URL { senseVoiceDirectory.appendingPathComponent("tokens.txt") }

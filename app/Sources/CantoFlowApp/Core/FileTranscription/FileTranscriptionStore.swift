@@ -288,7 +288,8 @@ final class FileTranscriptionStore: ObservableObject {
             manifestURL: workspace.manifestURL(batchID),
             modelDirURL: paths.qwenModelDirectory,
             outputDirURL: workspace.transcriptsDirectory(batchID),
-            traditional: true
+            traditional: true,
+            environment: paths.offlineModelEnvironment
         )
 
         do {
