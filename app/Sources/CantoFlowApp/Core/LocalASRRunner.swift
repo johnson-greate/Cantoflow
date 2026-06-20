@@ -144,6 +144,9 @@ final class LocalASRRunner {
                 let process = Process()
                 process.executableURL = executable
                 process.arguments = arguments
+                // Avoid inheriting a restricted-volume CWD (e.g. /Volumes/JTDev),
+                // which makes Python abort on os.getcwd() with a permission error.
+                process.currentDirectoryURL = FileManager.default.temporaryDirectory
 
                 let outputPipe = Pipe()
                 process.standardOutput = outputPipe

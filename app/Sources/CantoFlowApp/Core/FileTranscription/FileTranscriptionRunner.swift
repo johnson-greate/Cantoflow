@@ -123,6 +123,13 @@ final class FileTranscriptionRunner {
     func run(_ config: Config, onEvent: @escaping (WorkerEvent) -> Void) async throws -> Int32 {
         let process = Process()
         process.executableURL = config.pythonURL
+        // Pin the worker's working directory to an always-accessible dir.
+        // Otherwise it inherits the app's CWD, which may be a restricted removable
+        // volume (e.g. /Volumes/JTDev) → Python aborts on os.getcwd() with
+        // "[Errno 13] Permission denied" before transcription even starts.
+        process.currentDirectoryURL = FileManager.default.fileExists(atPath: config.outputDirURL.path)
+            ? config.outputDirURL
+            : FileManager.default.temporaryDirectory
         var args = [
             config.workerScriptURL.path,
             "--manifest", config.manifestURL.path,
