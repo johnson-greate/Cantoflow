@@ -33,10 +33,12 @@ struct TranscriptDetailView: View {
                 Spacer()
             }
         }
-        .onChange(of: item?.transcriptURL) { _ in loadTranscript() }
-        .onChange(of: item?.meetingNotesURL) { _ in loadNotes() }
-        .onChange(of: item?.id) { _ in tab = .transcript; loadTranscript(); loadNotes() }
-        .onAppear { loadTranscript(); loadNotes() }
+        // .task(id:) reliably (re)loads when the view appears AND whenever the
+        // URL/selection changes — including transcriptURL going nil → set as a
+        // batch finishes, which .onChange on an optional keypath can miss.
+        .task(id: item?.transcriptURL) { loadTranscript() }
+        .task(id: item?.meetingNotesURL) { loadNotes() }
+        .onChange(of: item?.id) { _ in tab = .transcript }
     }
 
     private func placeholder(_ item: FileTranscriptionItem?) -> String {
