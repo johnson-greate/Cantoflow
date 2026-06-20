@@ -162,8 +162,8 @@ final class PushToTalkManager {
                     return Unmanaged.passUnretained(event)
                 }
 
-                manager.handleEvent(type: type, event: event)
-                return Unmanaged.passUnretained(event)
+                let consumed = manager.handleEvent(type: type, event: event)
+                return consumed ? nil : Unmanaged.passUnretained(event)
             },
             userInfo: refcon
         ) else {
@@ -239,8 +239,10 @@ final class PushToTalkManager {
         }
     }
 
-    /// Handle keyboard event
-    private func handleEvent(type: CGEventType, event: CGEvent) {
+    /// Handle keyboard event. Returns true if the event was the trigger key and
+    /// should be consumed (swallowed) so the focused app never receives it —
+    /// otherwise a non-text key like F12 makes the app beep on every auto-repeat.
+    private func handleEvent(type: CGEventType, event: CGEvent) -> Bool {
         let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = CustomHotkey.normalizedModifiers(event.flags.rawValue, keyCode: keyCode)
         let expectedFlags = CustomHotkey.normalizedModifiers(
@@ -256,19 +258,25 @@ final class PushToTalkManager {
                 let isDown = (flags & expectedFlags) != 0
                 handleKeyStateChange(isDown: isDown)
             }
+            // Never consume modifier events — Fn/Globe are needed system-wide.
+            return false
         } else {
             // Handle normal keys (keyDown/keyUp) with modifiers
-            guard keyCode == triggerKey.keyCode else { return }
-            
+            guard keyCode == triggerKey.keyCode else { return false }
+
             // To prevent firing on 'Shift+F12' when only 'F12' is requested, require flag equality
             let isModifiersMatching = (flags == expectedFlags)
 
             if type == .keyDown && isModifiersMatching {
                 handleKeyStateChange(isDown: true)
+                return true   // consume the matching keyDown and its auto-repeats
             } else if type == .keyUp {
                 // Ignore modifier mismatch on KeyUp to ensure we reliably stop recording
                 handleKeyStateChange(isDown: false)
+                return true   // consume the release so the app never sees it
             }
+            // keyDown with non-matching modifiers (e.g. Shift+F12): let it pass through.
+            return false
         }
     }
 

@@ -183,7 +183,6 @@ final class STTPipeline {
         var polishStatus = "not_run"
         var fastIMERawStatus = "not_run"
         var fastIMEReplaceStatus = "not_run"
-        var rawAutoPasted = false
 
         // Flush any pending correction session from the previous recording,
         // and capture the focused element + terminal status while the user's
@@ -196,19 +195,28 @@ final class STTPipeline {
             )
         }
 
-        // Fast IME: insert raw text first.
+        // Whether an LLM polish pass will run and replace the raw text.
+        let willPolish = textPolisher.isAvailable()
+        // When polish will replace raw anyway, skip the raw paste entirely and paste
+        // the polished text once. The old "paste raw → Cmd+Z undo → paste polished"
+        // dance relied on the target app treating one Cmd+Z as undoing exactly the
+        // raw paste — unreliable, and when undo silently failed the user saw BOTH
+        // raw and polished text.
+        let deferRawForPolish = config.fastIME && config.autoPaste && config.autoReplace
+            && willPolish && !isTerminal
+
+        // Fast IME: insert raw text first (unless deferred for polish).
         // Skip in terminal apps — Cmd+Z won't undo text and pasted newlines execute as commands.
         // All insertViaClipboard calls hop to @MainActor (NSPasteboard + CGEvent require main thread).
         if config.fastIME {
             fastIMERawStatus = "copied"
 
             if config.autoPaste && !isTerminal {
-                let result = await textInserter.insertViaClipboard(text: rawText)
-                if result.success {
-                    rawAutoPasted = true
-                    fastIMERawStatus = "auto_pasted"
+                if deferRawForPolish {
+                    fastIMERawStatus = "deferred_for_polish"
                 } else {
-                    fastIMERawStatus = "copy_only"
+                    let result = await textInserter.insertViaClipboard(text: rawText)
+                    fastIMERawStatus = result.success ? "auto_pasted" : "copy_only"
                 }
             } else if isTerminal {
                 fastIMERawStatus = "skipped_terminal"
@@ -216,7 +224,7 @@ final class STTPipeline {
         }
 
         // Polish text if provider is available
-        if textPolisher.isAvailable() {
+        if willPolish {
             do {
                 let polishResult = try await textPolisher.polish(rawText: rawText)
                 finalText = polishResult.text
@@ -224,22 +232,22 @@ final class STTPipeline {
                 provider = polishResult.provider.rawValue
                 polishStatus = "ok"
 
-                // Fast IME: replace raw with polished (regular apps only).
-                // Terminal is handled separately below so it works even without polish.
-                if config.fastIME && config.autoPaste && config.autoReplace && rawAutoPasted {
-                    fastIMEReplaceStatus = "copied"
-                    let undoSuccess = await MainActor.run { textInserter.undo() }
-                    if undoSuccess {
-                        try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
-                        let insertResult = await textInserter.insertViaClipboard(text: finalText)
-                        fastIMEReplaceStatus = insertResult.success ? "undo_then_paste" : "undo_only"
-                    } else {
-                        fastIMEReplaceStatus = "copy_only"
-                    }
+                // Fast IME: paste polished (regular apps only). Raw was deferred above,
+                // so this is the single paste the user sees — no undo needed.
+                // Terminal is handled separately below.
+                if deferRawForPolish {
+                    let insertResult = await textInserter.insertViaClipboard(text: finalText)
+                    fastIMEReplaceStatus = insertResult.success ? "polished_paste" : "copy_only"
                 }
             } catch {
                 polishStatus = "failed"
                 print("Polish failed: \(error)")
+                // Polish failed after we deferred the raw paste — paste raw now so the
+                // user still gets their text.
+                if deferRawForPolish {
+                    let insertResult = await textInserter.insertViaClipboard(text: rawText)
+                    fastIMEReplaceStatus = insertResult.success ? "raw_fallback" : "copy_only"
+                }
             }
         }
 

@@ -3,7 +3,6 @@ import ApplicationServices
 
 // Virtual key codes from macOS HIToolbox/Events.h
 private let kVK_ANSI_V: CGKeyCode = 0x09  // V key → Cmd+V (paste)
-private let kVK_ANSI_Z: CGKeyCode = 0x06  // Z key → Cmd+Z (undo)
 
 // Timing constants for clipboard operations
 /// Delay before sending Cmd+V to let the pasteboard settle
@@ -93,11 +92,6 @@ final class TextInserter {
         return InsertionResult(method: .clipboard, success: success)
     }
 
-    /// Undo the last insertion (Cmd+Z) for fast IME replace mode.
-    func undo() -> Bool {
-        return sendCmdZ()
-    }
-
     /// Capture the currently focused AX element for use by CorrectionWatcher.
     /// Call immediately after text insertion while focus is still on the target field.
     func captureCurrentElement() -> AXUIElement? {
@@ -185,19 +179,6 @@ final class TextInserter {
         let source = CGEventSource(stateID: .hidSystemState)
         guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: kVK_ANSI_V, keyDown: true),
               let keyUp   = CGEvent(keyboardEventSource: source, virtualKey: kVK_ANSI_V, keyDown: false) else {
-            return false
-        }
-        keyDown.flags = .maskCommand
-        keyUp.flags   = .maskCommand
-        keyDown.post(tap: .cghidEventTap)
-        keyUp.post(tap: .cghidEventTap)
-        return true
-    }
-
-    private func sendCmdZ() -> Bool {
-        let source = CGEventSource(stateID: .hidSystemState)
-        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: kVK_ANSI_Z, keyDown: true),
-              let keyUp   = CGEvent(keyboardEventSource: source, virtualKey: kVK_ANSI_Z, keyDown: false) else {
             return false
         }
         keyDown.flags = .maskCommand

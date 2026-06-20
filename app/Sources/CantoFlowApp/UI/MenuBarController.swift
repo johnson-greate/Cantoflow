@@ -208,6 +208,31 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
             .withSymbolConfiguration(config)
     }
 
+    /// CantoFlow menu-bar mark: rounded waveform bars mirroring the app icon's
+    /// Voice Capsule. Rendered as a template image so the system tints it for
+    /// light/dark menu bars.
+    private func cantoFlowMarkImage() -> NSImage {
+        let height: CGFloat = 16
+        let barWidth: CGFloat = 2.2
+        let gap: CGFloat = 1.8
+        // Bar heights trace the icon's forward-flowing waveform contour.
+        let ratios: [CGFloat] = [0.40, 0.66, 0.88, 1.0, 0.74, 0.52]
+        let width = CGFloat(ratios.count) * barWidth + CGFloat(ratios.count - 1) * gap
+        let image = NSImage(size: NSSize(width: width, height: height), flipped: false) { _ in
+            for (i, ratio) in ratios.enumerated() {
+                let barHeight = max(barWidth, ratio * height)
+                let x = CGFloat(i) * (barWidth + gap)
+                let y = (height - barHeight) / 2
+                let rect = NSRect(x: x, y: y, width: barWidth, height: barHeight)
+                NSColor.black.setFill()
+                NSBezierPath(roundedRect: rect, xRadius: barWidth / 2, yRadius: barWidth / 2).fill()
+            }
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
+
     /// Applies bold system font to a menu item's attributed title.
     private func applyBoldTitle(_ title: String, to item: NSMenuItem) {
         let boldFont = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)
@@ -274,7 +299,12 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         }
 
         button.title = title
-        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "CantoFlow")
+        if case .idle = state {
+            // Idle: show the CantoFlow waveform mark instead of a generic mic glyph.
+            button.image = cantoFlowMarkImage()
+        } else {
+            button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "CantoFlow")
+        }
         button.imagePosition = .imageLeading
         button.contentTintColor = tint
 
