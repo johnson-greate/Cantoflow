@@ -4,6 +4,7 @@ import Foundation
 /// models/runtime) and the current process memory, for the "運行資訊" menu item
 /// shown to students. Excludes the optional local LLM (Ollama).
 struct RunningInfo {
+    let activeEngine: STTEngine
     let appBytes: UInt64
     let whisperBytes: UInt64
     let localASRBytes: UInt64
@@ -23,6 +24,7 @@ struct RunningInfo {
         let localASR = directorySize(ASRRuntimePaths().root)
 
         return RunningInfo(
+            activeEngine: config.activeSTTEngine,
             appBytes: app,
             whisperBytes: whisper,
             localASRBytes: localASR,
@@ -32,12 +34,14 @@ struct RunningInfo {
 
     /// Human-readable multi-line summary for the alert.
     func summary() -> String {
-        var lines = ["📦 應用程式：\(Self.format(appBytes))"]
+        let whisperActive = activeEngine == .whisper
+        var lines = ["目前引擎：\(activeEngine.displayName)", ""]
+        lines.append("📦 應用程式：\(Self.format(appBytes))")
         if whisperBytes > 0 {
-            lines.append("🎙️ Whisper（程式＋模型）：\(Self.format(whisperBytes))")
+            lines.append("🎙️ Whisper 模型\(whisperActive ? "（使用中）" : "（備用）")：\(Self.format(whisperBytes))")
         }
         if localASRBytes > 0 {
-            lines.append("🧠 本機 ASR（模型＋環境）：\(Self.format(localASRBytes))")
+            lines.append("🧠 本機 ASR \(whisperActive ? "（備用）" : "（使用中）")：\(Self.format(localASRBytes))")
         }
         lines.append("────────────")
         lines.append("💾 SSD 總用量：≈ \(Self.format(diskTotalBytes))")
