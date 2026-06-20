@@ -11,7 +11,7 @@ enum PolishError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noAPIKey:
-            return "No API key found. Set GEMINI_API_KEY, DASHSCOPE_API_KEY/QWEN_API_KEY, or OPENAI_API_KEY."
+            return "No API key found. Set DEEPSEEK_API_KEY, GEMINI_API_KEY, DASHSCOPE_API_KEY/QWEN_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY."
         case .networkError(let error):
             return "Network error: \(error.localizedDescription)"
         case .apiError(let message):
@@ -54,7 +54,7 @@ enum PolishStyle: String, CaseIterable {
         switch self {
         case .cantonese:
             return """
-            你是一位精通香港廣東話口語的資深編輯。你的工作是把 Whisper 語音轉錄粗稿輕度修正，整理成地道、自然、貼近香港人日常打字的廣東話文字。
+            你是一位精通香港廣東話口語的資深編輯。你的工作是把 ASR 語音轉錄粗稿輕度修正，整理成地道、自然、貼近香港人日常打字的廣東話文字。
 
             請嚴格遵守以下規則：
             1. 保持原意，不要擴寫，不要總結，不要自行補充資訊。
@@ -85,7 +85,7 @@ enum PolishStyle: String, CaseIterable {
     }
 }
 
-/// LLM-based text polisher supporting Qwen, Anthropic, and OpenAI
+/// LLM-based text polisher supporting DeepSeek, Gemini, Qwen, Anthropic, OpenAI, and local models.
 final class TextPolisher {
     private let config: AppConfig
 
@@ -121,7 +121,7 @@ final class TextPolisher {
         switch style {
         case .cantonese:
             return """
-            以下是 Whisper 轉錄粗稿。請按「香港廣東話口語模式」做最小必要修正，並優先跟從詞庫用字。
+            以下是 ASR 轉錄粗稿。請按「香港廣東話口語模式」做最小必要修正，並優先跟從詞庫用字。
 
             粗稿：
             \(rawText)
@@ -145,6 +145,8 @@ final class TextPolisher {
 
         let polishedText: String
         switch provider {
+        case .deepseek:
+            polishedText = try await callDeepSeek(text: rawText)
         case .gemini:
             polishedText = try await callGemini(text: rawText)
         case .qwen:
@@ -200,10 +202,19 @@ final class TextPolisher {
         )
     }
 
+    private func resolvedDeepSeekAPIKey() -> String? {
+        resolvedAPIKey(
+            envVars: ["DEEPSEEK_API_KEY"],
+            userDefaultsKeys: ["deepseekAPIKey"]
+        )
+    }
+
     /// Resolve which provider to use based on config and available API keys.
     /// Checks both environment variables and UserDefaults (Settings UI keys).
     private func resolveProvider() -> AppConfig.PolishProvider {
-        switch config.polishProvider {
+        switch config.activePolishProvider {
+        case .deepseek:
+            return resolvedDeepSeekAPIKey() != nil ? .deepseek : .none
         case .gemini:
             return resolvedGeminiAPIKey() != nil ? .gemini : .none
         case .qwen:
@@ -217,8 +228,11 @@ final class TextPolisher {
         case .none:
             return .none
         case .auto:
-            // Priority: Gemini > Qwen > OpenAI > Anthropic > Local
-            if resolvedGeminiAPIKey() != nil {
+            // DeepSeek V4 Flash is the preferred low-latency cloud polisher.
+            // Explicit provider selection still overrides this auto order.
+            if resolvedDeepSeekAPIKey() != nil {
+                return .deepseek
+            } else if resolvedGeminiAPIKey() != nil {
                 return .gemini
             } else if resolvedQwenAPIKey() != nil {
                 return .qwen
@@ -237,6 +251,63 @@ final class TextPolisher {
     /// Check if polishing is available (API key exists in env or UserDefaults)
     func isAvailable() -> Bool {
         return resolveProvider() != .none
+    }
+
+    // MARK: - DeepSeek API (OpenAI-compatible)
+
+    private func callDeepSeek(text: String) async throws -> String {
+        guard let apiKey = resolvedDeepSeekAPIKey() else {
+            throw PolishError.noAPIKey
+        }
+
+        let model = ProcessInfo.processInfo.environment["DEEPSEEK_MODEL"] ?? "deepseek-v4-flash"
+        let requestBody: [String: Any] = [
+            "model": model,
+            "temperature": 0.2,
+            "max_tokens": 1024,
+            // V4 defaults to thinking mode. Polishing is a short deterministic
+            // rewrite, so disable reasoning to minimise end-to-end dictation latency.
+            "thinking": ["type": "disabled"],
+            "messages": [
+                ["role": "system", "content": generateSystemPrompt()],
+                ["role": "user", "content": generateUserPrompt(for: text)]
+            ]
+        ]
+
+        let jsonData = try JSONSerialization.data(withJSONObject: requestBody)
+        var request = URLRequest(url: URL(string: "https://api.deepseek.com/chat/completions")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = jsonData
+        request.timeoutInterval = 10
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw PolishError.invalidResponse
+        }
+        guard httpResponse.statusCode == 200 else {
+            if let errorJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let error = errorJson["error"] as? [String: Any],
+               let message = error["message"] as? String {
+                throw PolishError.apiError(message)
+            }
+            throw PolishError.apiError("HTTP \(httpResponse.statusCode)")
+        }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = json["choices"] as? [[String: Any]],
+              let firstChoice = choices.first,
+              let message = firstChoice["message"] as? [String: Any],
+              let content = message["content"] as? String else {
+            throw PolishError.invalidResponse
+        }
+
+        let polished = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !polished.isEmpty else {
+            throw PolishError.emptyResult
+        }
+        return polished
     }
 
     // MARK: - Gemini API

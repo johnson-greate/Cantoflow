@@ -25,11 +25,15 @@ struct SettingsView: View {
                 .tabItem { Label("Vocabulary", systemImage: "text.book.closed") }
                 .tag(1)
 
+            ASRModelsTab()
+                .tabItem { Label("Models", systemImage: "waveform.badge.magnifyingglass") }
+                .tag(2)
+
             APIKeysTab()
                 .tabItem { Label("API Keys", systemImage: "key.fill") }
-                .tag(2)
+                .tag(3)
         }
-        .frame(width: 560, height: 440)
+        .frame(width: 580, height: 500)
     }
 }
 
@@ -39,6 +43,7 @@ struct GeneralTab: View {
     @AppStorage("launchAtLogin") private var launchAtLogin = false
     @AppStorage("soundFeedback") private var soundFeedback = true
     @AppStorage("polishStyle") private var polishStyleRaw: String = PolishStyle.cantonese.rawValue
+    @AppStorage(AppConfig.polishProviderDefaultsKey) private var polishProviderRaw: String = AppConfig.PolishProvider.auto.rawValue
     @AppStorage(AudioDeviceManager.preferredInputDeviceDefaultsKey) private var preferredInputDeviceUID: String = ""
     @State private var inputDevices: [AudioInputDevice] = AudioDeviceManager.shared.availableInputDevices()
     @State private var startupStatusMessage: String = ""
@@ -98,6 +103,12 @@ struct GeneralTab: View {
             }
 
             Section("Text Polish") {
+                Picker("LLM", selection: $polishProviderRaw) {
+                    ForEach(AppConfig.PolishProvider.allCases, id: \.rawValue) { provider in
+                        Text(provider.displayName).tag(provider.rawValue)
+                    }
+                }
+
                 Picker("潤飾風格", selection: $polishStyleRaw) {
                     ForEach(PolishStyle.allCases, id: \.rawValue) { style in
                         Text(style.displayName).tag(style.rawValue)
@@ -106,6 +117,10 @@ struct GeneralTab: View {
                 .pickerStyle(.segmented)
 
                 Text(polishStyle.styleDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Text("選擇會在下一次錄音生效。DeepSeek V4 Flash 以 non-thinking 模式執行，優先降低潤飾等待時間。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -144,6 +159,156 @@ struct GeneralTab: View {
         if !preferredInputDeviceUID.isEmpty,
            !inputDevices.contains(where: { $0.uid == preferredInputDeviceUID }) {
             preferredInputDeviceUID = ""
+        }
+    }
+}
+
+// MARK: - ASR Models Tab
+
+struct ASRModelsTab: View {
+    @AppStorage(AppConfig.sttEngineDefaultsKey) private var selectedEngineRaw = STTEngine.whisper.rawValue
+    @State private var isInstalling = false
+    @State private var installMessage = ""
+    @State private var statusRefreshToken = UUID()
+
+    private let config = AppConfig.fromArgs()
+    private let runtimePaths = ASRRuntimePaths()
+
+    private var selectedEngine: STTEngine {
+        STTEngine(rawValue: selectedEngineRaw) ?? .whisper
+    }
+
+    private var readiness: (ready: Bool, message: String) {
+        _ = statusRefreshToken
+        return runtimePaths.readiness(for: selectedEngine, config: config)
+    }
+
+    var body: some View {
+        Form {
+            Section("Speech Recognition") {
+                Picker("辨識模型", selection: $selectedEngineRaw) {
+                    ForEach(STTEngine.allCases) { engine in
+                        Text(engine.displayName).tag(engine.rawValue)
+                    }
+                }
+
+                Text(selectedEngine.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 8) {
+                    Image(systemName: readiness.ready ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(readiness.ready ? Color.green : Color.orange)
+                    Text(readiness.message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Local Runtime") {
+                LabeledContent("位置", value: runtimePaths.root.path)
+                    .font(.caption)
+
+                if selectedEngine != .whisper {
+                    HStack {
+                        Button(readiness.ready ? "重新安裝 / 修復" : "安裝所選模型") {
+                            installSelectedEngine()
+                        }
+                        .disabled(isInstalling)
+
+                        if isInstalling {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("下載及準備中，請保持 CantoFlow 開啟…")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Text(selectedEngine == .qwen3ASR
+                         ? "Qwen 首次安裝會下載原始權重，再在本機轉成 8-bit；需數分鐘及約 3 GB 暫存空間。"
+                         : "SenseVoice 下載約 166 MB，使用 sherpa-onnx CPU runtime。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Whisper 由 CantoFlow 主安裝程式管理。現有模型和設定不會被改動。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if !installMessage.isEmpty {
+                    Text(installMessage)
+                        .font(.caption)
+                        .foregroundStyle(installMessage.hasPrefix("完成") ? Color.green : Color.secondary)
+                        .textSelection(.enabled)
+                }
+
+                Button("在 Finder 顯示 Runtime") {
+                    try? FileManager.default.createDirectory(at: runtimePaths.root, withIntermediateDirectories: true)
+                    NSWorkspace.shared.activateFileViewerSelecting([runtimePaths.root])
+                }
+            }
+
+            Section("How switching works") {
+                Text("選擇會在下一次錄音即時生效，不需重新啟動。第一次推論包含模型冷啟動時間；目前版本是為三模型品質比較而設。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .onChange(of: selectedEngineRaw) { _ in
+            installMessage = ""
+            statusRefreshToken = UUID()
+        }
+    }
+
+    private func installSelectedEngine() {
+        guard selectedEngine != .whisper else { return }
+
+        let script = config.localASRInstaller
+        guard FileManager.default.fileExists(atPath: script.path) else {
+            installMessage = "找不到安裝程式：\(script.path)"
+            return
+        }
+
+        let engineRaw = selectedEngine.rawValue
+        let engineDisplayName = selectedEngine.displayName
+        isInstalling = true
+        installMessage = "安裝已開始…"
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/bash")
+            process.arguments = [script.path, "--engine", engineRaw]
+
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+
+            do {
+                try process.run()
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                let output = String(data: data, encoding: .utf8) ?? ""
+                let lastLine = output
+                    .split(separator: "\n")
+                    .last
+                    .map(String.init) ?? ""
+
+                DispatchQueue.main.async {
+                    isInstalling = false
+                    statusRefreshToken = UUID()
+                    installMessage = process.terminationStatus == 0
+                        ? "完成：\(lastLine.isEmpty ? engineDisplayName + " 已就緒" : lastLine)"
+                        : "安裝失敗（exit \(process.terminationStatus)）：\(lastLine)"
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    isInstalling = false
+                    installMessage = "安裝失敗：\(error.localizedDescription)"
+                }
+            }
         }
     }
 }
@@ -791,6 +956,7 @@ struct AddEditTermSheet: View {
 // MARK: - API Keys Tab
 
 struct APIKeysTab: View {
+    @AppStorage("deepseekAPIKey") private var deepseekAPIKey: String = ""
     @AppStorage("geminiAPIKey") private var geminiAPIKey: String = ""
     @AppStorage("dashscopeAPIKey") private var dashscopeAPIKey: String = ""
     @AppStorage("qwenAPIKey") private var qwenAPIKey: String = ""
@@ -804,6 +970,20 @@ struct APIKeysTab: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                GroupBox("DeepSeek V4 Flash") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        apiKeyField(
+                            title: "DeepSeek API Key",
+                            envName: "DEEPSEEK_API_KEY",
+                            text: $deepseekAPIKey
+                        )
+
+                        Text("使用 deepseek-v4-flash 的 non-thinking 模式潤飾 ASR 文字；在自動模式中具有最高優先次序。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 GroupBox("Google Gemini") {
                     VStack(alignment: .leading, spacing: 12) {
                         apiKeyField(
@@ -812,7 +992,7 @@ struct APIKeysTab: View {
                             text: $geminiAPIKey
                         )
 
-                        Text("Gemini polish 會用 Google Gemini endpoint 去潤飾 Whisper 文字，並配合 vocabulary 做校正。")
+                        Text("Gemini polish 會用 Google Gemini endpoint 去潤飾 ASR 文字，並配合 vocabulary 做校正。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -831,7 +1011,7 @@ struct APIKeysTab: View {
                             text: $qwenAPIKey
                         )
 
-                        Text("Qwen polish 會用這個 key 去潤飾 Whisper 文字，並配合 vocabulary 做校正。建議填 DashScope key。")
+                        Text("Qwen polish 會用這個 key 去潤飾 ASR 文字，並配合 vocabulary 做校正。建議填 DashScope key。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -898,7 +1078,7 @@ struct APIKeysTab: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Text("API keys are saved to ~/.cantoflow.env immediately and take effect on the next recording — no restart required. Testing uses the first available key in this order: Gemini, DashScope/Qwen, OpenAI.")
+                Text("API keys are saved to ~/.cantoflow.env immediately and take effect on the next recording. Testing uses the first available key in this order: DeepSeek, Gemini, DashScope/Qwen, OpenAI.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -907,6 +1087,7 @@ struct APIKeysTab: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear { loadFromEnvFile() }
+        .onChange(of: deepseekAPIKey)  { newVal in syncKeyToEnvFile(envVar: "DEEPSEEK_API_KEY",  value: newVal) }
         .onChange(of: geminiAPIKey)    { newVal in syncKeyToEnvFile(envVar: "GEMINI_API_KEY",    value: newVal) }
         .onChange(of: dashscopeAPIKey) { newVal in syncKeyToEnvFile(envVar: "DASHSCOPE_API_KEY", value: newVal) }
         .onChange(of: qwenAPIKey)      { newVal in syncKeyToEnvFile(envVar: "QWEN_API_KEY",      value: newVal) }
@@ -971,6 +1152,7 @@ struct APIKeysTab: View {
     private func loadFromEnvFile() {
         guard let content = try? String(contentsOf: cantoflowEnvPath, encoding: .utf8) else { return }
         let parsed = parseEnvFile(content)
+        if let v = parsed["DEEPSEEK_API_KEY"]  { deepseekAPIKey  = v }
         if let v = parsed["GEMINI_API_KEY"]    { geminiAPIKey    = v }
         if let v = parsed["DASHSCOPE_API_KEY"] { dashscopeAPIKey = v }
         if let v = parsed["QWEN_API_KEY"]      { qwenAPIKey      = v }
@@ -1048,11 +1230,15 @@ struct APIKeysTab: View {
     }
 
     private func currentTestTarget() -> APIKeyTestTarget? {
+        let deepseek = deepseekAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let dashscope = dashscopeAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let gemini = geminiAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let qwen = qwenAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let openai = openaiAPIKey.trimmingCharacters(in: .whitespacesAndNewlines)
 
+        if !deepseek.isEmpty {
+            return .deepseek(deepseek)
+        }
         if !gemini.isEmpty {
             return .gemini(gemini)
         }
@@ -1117,12 +1303,14 @@ private enum APIKeyTestState {
 }
 
 private enum APIKeyTestTarget {
+    case deepseek(String)
     case gemini(String)
     case dashscope(String)
     case openAI(String)
 
     var providerName: String {
         switch self {
+        case .deepseek: return "DeepSeek V4 Flash"
         case .gemini: return "Gemini"
         case .dashscope: return "DashScope"
         case .openAI: return "OpenAI"
@@ -1131,6 +1319,15 @@ private enum APIKeyTestTarget {
 
     var request: URLRequest {
         switch self {
+        case .deepseek(let apiKey):
+            var request = URLRequest(url: URL(string: "https://api.deepseek.com/chat/completions")!)
+            request.httpMethod = "POST"
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = """
+            {"model":"deepseek-v4-flash","messages":[{"role":"user","content":"Reply only OK"}],"thinking":{"type":"disabled"},"max_tokens":2,"temperature":0}
+            """.data(using: .utf8)
+            return request
         case .gemini(let apiKey):
             var request = URLRequest(url: URL(string: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent")!)
             request.httpMethod = "POST"
@@ -1352,7 +1549,12 @@ struct HotkeyRecorderView: View {
             display = modsString + display
         }
 
-        let newHotkey = CustomHotkey(keyCode: CGKeyCode(keyCode), modifierFlags: modifiers, displayName: display)
+        let storedModifiers = CustomHotkey.normalizedModifiers(modifiers, keyCode: CGKeyCode(keyCode))
+        let newHotkey = CustomHotkey(
+            keyCode: CGKeyCode(keyCode),
+            modifierFlags: storedModifiers,
+            displayName: display
+        )
         if let data = try? JSONEncoder().encode(newHotkey) {
             self.customHotkeyString = data.base64EncodedString()
         }

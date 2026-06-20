@@ -156,13 +156,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             checks.append("快捷鍵監聽不可用，請開啟輸入監控權限")
         }
 
-        if !fm.isExecutableFile(atPath: config.whisperCLI.path) {
-            checks.append("找不到 whisper-cli: \(config.whisperCLI.lastPathComponent)")
+        let engine = config.activeSTTEngine
+        let readiness = ASRRuntimePaths().readiness(for: engine, config: config)
+        if !readiness.ready {
+            checks.append("\(engine.shortName) 未就緒: \(readiness.message)")
         }
 
-        let preferredModel = config.resolveModelPath()
-        if !fm.fileExists(atPath: preferredModel.path) {
-            checks.append("找不到模型: \(preferredModel.lastPathComponent)")
+        if engine != .whisper && !fm.fileExists(atPath: config.localASRBridge.path) {
+            checks.append("找不到 Local ASR bridge")
         }
 
         if AudioDeviceManager.shared.resolvedInputDevice() == nil {

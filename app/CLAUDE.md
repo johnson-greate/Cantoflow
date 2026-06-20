@@ -99,7 +99,7 @@ if !config.fastIME {
 |------|------|----------|
 | `fastIME` | `true` | `--fast-ime` / `--no-fast-ime` |
 | `autoPaste` | `true` | `--auto-paste` / `--no-auto-paste` |
-| `autoReplace` | `false` | `--auto-replace` / `--no-auto-replace` |
+| `autoReplace` | `true` | `--auto-replace` / `--no-auto-replace` |
 | `sttBackend` | `.whisper` | `--stt-backend whisper\|funasr` |
 | `sttProfile` | `.fast` | `--stt-profile fast\|balanced\|accurate` |
 | `polishProvider` | `.auto` | `--polish-provider auto\|qwen\|openai\|anthropic\|none` |

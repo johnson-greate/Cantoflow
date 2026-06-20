@@ -1,5 +1,5 @@
 # CantoFlow — Current Status
-_Last updated: 2026-03-17_
+_Last updated: 2026-04-13_
 
 ---
 
@@ -122,10 +122,31 @@ Client (macOS/Windows) → HTTPS + Bearer Token
 
 ---
 
+## Student Distribution (macOS)
+
+GitHub Release `student-v1` published. One-liner installer `install-student.sh`.
+
+| Item | Status |
+|---|---|
+| Pre-built `.app` + `whisper-cli` on GitHub Releases | ✅ Done |
+| `install-student.sh` one-liner | ✅ Done (bug: see below) |
+| Chinese-only UI | ✅ Done |
+| Local LLM (Ollama) optional install | ✅ Done |
+| Test on Johnson's MBA (original dev machine) | 🟡 Install done, not yet tested |
+| Test on truly clean Mac | ❌ Not yet done |
+
+**Known `install-student.sh` bug**: When user answers Y to Ollama, inner `curl \| sh` consumes outer bash stdin, silently corrupting the launcher heredoc. Needs fix.
+
+---
+
 ## Pending Features
 
 | Feature | Priority | Notes |
 |---|---|---|
+| Fix install-student.sh stdin/launcher bug | 🔴 High | Affects any student who installs Ollama |
+| Test on clean Mac | 🔴 High | Must validate before distributing to students |
+| Settings UI Chinese (tabs still English) | 🟡 Medium | "General" / "Vocabulary" / "API Keys" |
+| Fix Gemma4 size in installer (7.2GB not 2.5GB) | 🟡 Medium | Misleads students on disk space |
 | Corporate STT server | 🔴 High | Blocked on hardware arrival; plan written |
 | Keychron mic button mapping | 🟡 Medium | Test on real hardware first |
 | Inno Setup installer | 🟢 Low | After STT speed acceptable on all clients |

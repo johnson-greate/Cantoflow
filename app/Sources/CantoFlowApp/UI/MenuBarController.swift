@@ -239,7 +239,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
 
         let accel = result.metalEnabled ? "GPU" : "CPU"
         let polishLabel = result.polishMs > 0 ? " · LLM \(polishSec)s" : ""
-        let title = "上次: \(chars)字 · STT \(sttSec)s [\(accel)]\(polishLabel) · 共 \(totalSec)s"
+        let title = "上次: \(chars)字 · \(result.sttModel) \(sttSec)s [\(accel)]\(polishLabel) · 共 \(totalSec)s"
 
         // Called from inside MainActor.run {} — already on main thread.
         // Direct assignment avoids an extra GCD block lifecycle.

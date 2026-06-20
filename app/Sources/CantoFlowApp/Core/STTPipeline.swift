@@ -36,6 +36,7 @@ struct PipelineResult {
     let fastIMERawStatus: String
     let fastIMEReplaceStatus: String
     let metalEnabled: Bool
+    let sttModel: String
 }
 
 /// Minimum recording duration in milliseconds
@@ -56,6 +57,7 @@ final class STTPipeline {
 
     private let audioCapture = AudioCapture()
     private let whisperRunner: WhisperRunner
+    private let localASRRunner: LocalASRRunner
     private let textPolisher: TextPolisher
     private let textInserter = TextInserter()
     private let telemetryLogger: TelemetryLogger
@@ -73,25 +75,48 @@ final class STTPipeline {
     init(config: AppConfig) {
         self.config = config
         self.whisperRunner = WhisperRunner(config: config)
+        self.localASRRunner = LocalASRRunner(config: config)
         self.textPolisher = TextPolisher(config: config)
         self.telemetryLogger = TelemetryLogger(fileURL: config.telemetryFile)
     }
 
-    /// Run STT via whisper-cli
+    /// Run STT using the engine currently selected in Settings.
     private func runSTT(audioURL: URL, outputPrefix: URL) async throws -> STTResult {
-        let result = try await whisperRunner.transcribe(audioURL: audioURL, outputPrefix: outputPrefix)
-        return STTResult(
-            text: result.text,
-            rawOutputPath: result.rawOutputPath,
-            modelUsed: result.modelUsed.lastPathComponent,
-            durationMs: result.durationMs,
-            sttBreakdown: TelemetryEntry.LatencyMs.SttBreakdown(
-                launchMs: result.breakdown.launchMs,
-                inferenceMs: result.breakdown.inferenceMs,
-                outputReadMs: result.breakdown.outputReadMs,
-                metalEnabled: result.breakdown.metalEnabled
+        switch config.activeSTTEngine {
+        case .whisper:
+            let result = try await whisperRunner.transcribe(audioURL: audioURL, outputPrefix: outputPrefix)
+            return STTResult(
+                text: result.text,
+                rawOutputPath: result.rawOutputPath,
+                modelUsed: result.modelUsed.lastPathComponent,
+                durationMs: result.durationMs,
+                sttBreakdown: TelemetryEntry.LatencyMs.SttBreakdown(
+                    launchMs: result.breakdown.launchMs,
+                    inferenceMs: result.breakdown.inferenceMs,
+                    outputReadMs: result.breakdown.outputReadMs,
+                    metalEnabled: result.breakdown.metalEnabled
+                )
             )
-        )
+
+        case .senseVoice, .qwen3ASR:
+            let result = try await localASRRunner.transcribe(
+                engine: config.activeSTTEngine,
+                audioURL: audioURL,
+                outputPrefix: outputPrefix
+            )
+            return STTResult(
+                text: result.text,
+                rawOutputPath: result.rawOutputPath,
+                modelUsed: result.modelUsed,
+                durationMs: result.durationMs,
+                sttBreakdown: TelemetryEntry.LatencyMs.SttBreakdown(
+                    launchMs: result.launchMs,
+                    inferenceMs: result.inferenceMs,
+                    outputReadMs: result.outputReadMs,
+                    metalEnabled: result.metalEnabled
+                )
+            )
+        }
     }
 
     /// Request microphone permission
@@ -249,6 +274,7 @@ final class STTPipeline {
         // Log telemetry
         let entry = TelemetryEntry(
             timestamp: TelemetryLogger.isoTimestamp(),
+            sttEngine: config.activeSTTEngine.rawValue,
             sttProfile: config.sttProfile.rawValue,
             modelPath: sttResult.modelUsed,
             audioDevice: config.audioDevice,
@@ -300,7 +326,8 @@ final class STTPipeline {
             polishStatus: polishStatus,
             fastIMERawStatus: fastIMERawStatus,
             fastIMEReplaceStatus: fastIMEReplaceStatus,
-            metalEnabled: sttResult.sttBreakdown?.metalEnabled ?? false
+            metalEnabled: sttResult.sttBreakdown?.metalEnabled ?? false,
+            sttModel: sttResult.modelUsed
         )
     }
 

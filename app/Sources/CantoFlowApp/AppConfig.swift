@@ -2,12 +2,18 @@ import Foundation
 
 /// Application configuration parsed from CLI arguments
 struct AppConfig {
+    static let sttEngineDefaultsKey = "sttEngine"
+    static let polishProviderDefaultsKey = "polishProvider"
+
     var projectRoot: URL
+    var sttEngine: STTEngine = .whisper
     var sttProfile: STTProfile = .fast
     var audioDevice: String = "MacBook Air Microphone"
     var fastIME: Bool = true
     var autoPaste: Bool = true
-    var autoReplace: Bool = false
+    /// Fast IME shows the raw ASR result immediately, then swaps in the
+    /// polished result as soon as the LLM pass completes.
+    var autoReplace: Bool = true
     var polishProvider: PolishProvider = .auto
     var whisperPath: String? = nil
     var modelPath: String? = nil
@@ -28,17 +34,71 @@ struct AppConfig {
 
     enum PolishProvider: String, CaseIterable {
         case auto
+        case deepseek
         case gemini
         case openai
         case anthropic
         case qwen
         case local
         case none
+
+        var displayName: String {
+            switch self {
+            case .auto: return "自動（優先 DeepSeek）"
+            case .deepseek: return "DeepSeek V4 Flash"
+            case .gemini: return "Google Gemini"
+            case .openai: return "OpenAI"
+            case .anthropic: return "Anthropic Claude"
+            case .qwen: return "Qwen / DashScope"
+            case .local: return "本機 LLM"
+            case .none: return "不潤飾"
+            }
+        }
     }
 
     /// Resolved paths based on projectRoot
     var outDir: URL { projectRoot.appendingPathComponent(".out", isDirectory: true) }
     var telemetryFile: URL { outDir.appendingPathComponent("telemetry.jsonl") }
+
+    /// The Settings picker writes directly to UserDefaults. Resolve it for each
+    /// recording so switching engines takes effect without restarting CantoFlow.
+    var activeSTTEngine: STTEngine {
+        guard let raw = UserDefaults.standard.string(forKey: Self.sttEngineDefaultsKey) else {
+            return sttEngine
+        }
+        return STTEngine(rawValue: raw) ?? sttEngine
+    }
+
+    /// Like the ASR picker, the polish-provider picker is live. A change in
+    /// Settings applies to the next recording without rebuilding the pipeline.
+    var activePolishProvider: PolishProvider {
+        guard let raw = UserDefaults.standard.string(forKey: Self.polishProviderDefaultsKey) else {
+            return polishProvider
+        }
+        return PolishProvider(rawValue: raw) ?? polishProvider
+    }
+
+    var localASRBridge: URL {
+        let projectCopy = projectRoot.appendingPathComponent("scripts/local_asr_bridge.py")
+        if FileManager.default.fileExists(atPath: projectCopy.path) {
+            return projectCopy
+        }
+        if let resources = Bundle.main.resourceURL {
+            return resources.appendingPathComponent("asr/local_asr_bridge.py")
+        }
+        return projectCopy
+    }
+
+    var localASRInstaller: URL {
+        let projectCopy = projectRoot.appendingPathComponent("scripts/install-local-asr.sh")
+        if FileManager.default.fileExists(atPath: projectCopy.path) {
+            return projectCopy
+        }
+        if let resources = Bundle.main.resourceURL {
+            return resources.appendingPathComponent("asr/install-local-asr.sh")
+        }
+        return projectCopy
+    }
 
     var whisperCLI: URL {
         if let path = whisperPath {
@@ -156,6 +216,15 @@ struct AppConfig {
         let args = CommandLine.arguments
         var config = AppConfig(projectRoot: detectProjectRoot(args: args))
 
+        if let storedEngine = UserDefaults.standard.string(forKey: sttEngineDefaultsKey),
+           let engine = STTEngine(rawValue: storedEngine) {
+            config.sttEngine = engine
+        }
+        if let storedProvider = UserDefaults.standard.string(forKey: polishProviderDefaultsKey),
+           let provider = PolishProvider(rawValue: storedProvider) {
+            config.polishProvider = provider
+        }
+
         while i < args.count {
             let arg = args[i]
             switch arg {
@@ -167,6 +236,12 @@ struct AppConfig {
             case "--stt-profile":
                 if i + 1 < args.count, let profile = STTProfile(rawValue: args[i + 1]) {
                     config.sttProfile = profile
+                    i += 1
+                }
+            case "--stt-engine":
+                if i + 1 < args.count, let engine = STTEngine(rawValue: args[i + 1]) {
+                    config.sttEngine = engine
+                    UserDefaults.standard.set(engine.rawValue, forKey: sttEngineDefaultsKey)
                     i += 1
                 }
             case "--audio-device":
@@ -187,6 +262,7 @@ struct AppConfig {
             case "--polish-provider":
                 if i + 1 < args.count, let provider = PolishProvider(rawValue: args[i + 1]) {
                     config.polishProvider = provider
+                    UserDefaults.standard.set(provider.rawValue, forKey: polishProviderDefaultsKey)
                     i += 1
                 }
             case "--fast-ime":
@@ -235,11 +311,12 @@ struct AppConfig {
 
         Options:
           --project-root PATH     Project root directory (default: current directory)
+          --stt-engine ENGINE     STT engine: whisper, sensevoice, qwen3-asr (default: Settings value)
           --stt-profile PROFILE   STT profile: fast, balanced, accurate (default: fast)
           --audio-device NAME     Audio input device name (default: MacBook Air Microphone)
           --whisper PATH          Path to whisper-cli binary
           --model PATH            Path to whisper model file
-          --polish-provider NAME  LLM provider: auto, gemini, openai, anthropic, qwen, local, none (default: auto)
+          --polish-provider NAME  LLM provider: auto, deepseek, gemini, openai, anthropic, qwen, local, none (default: auto)
           --fast-ime              Enable fast IME mode (paste raw, then replace with polished)
           --no-fast-ime           Disable fast IME mode
           --auto-paste            Auto-paste transcribed text
@@ -254,6 +331,7 @@ struct AppConfig {
 
         Environment Variables:
           GEMINI_API_KEY         Google Gemini API key for text polishing
+          DEEPSEEK_API_KEY       DeepSeek API key for V4 Flash text polishing
           DASHSCOPE_API_KEY      DashScope API key for Qwen text polishing
           OPENAI_API_KEY          OpenAI API key for text polishing
           ANTHROPIC_API_KEY       Anthropic API key for text polishing

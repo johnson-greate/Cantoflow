@@ -20,13 +20,30 @@ struct CustomHotkey: Codable, Equatable {
         return mods.contains(keyCode)
     }
 
+    /// macOS may attach `.maskSecondaryFn` to F-key events depending on the
+    /// keyboard and the "Use F1, F2, etc. as standard function keys" setting.
+    /// It is transport noise for an F-key binding, not a user-requested chord.
+    var isFunctionKey: Bool {
+        Self.functionKeyCodes.contains(keyCode)
+    }
+
+    private static let functionKeyCodes: Set<CGKeyCode> = [
+        122, 120, 99, 118, 96, 97, 98, 100, 101, 109, // F1...F10
+        103, 111, 105, 107, 113, 106, 64, 79, 80, 90  // F11...F20
+    ]
+
     /// Mask of modifiers we actually care about (ignoring caps lock, num pad, etc)
-    static func normalizedModifiers(_ flags: UInt64) -> UInt64 {
-        let mask: UInt64 = CGEventFlags.maskShift.rawValue |
+    static func normalizedModifiers(_ flags: UInt64, keyCode: CGKeyCode? = nil) -> UInt64 {
+        var mask: UInt64 = CGEventFlags.maskShift.rawValue |
                            CGEventFlags.maskControl.rawValue |
                            CGEventFlags.maskAlternate.rawValue |
-                           CGEventFlags.maskCommand.rawValue |
-                           CGEventFlags.maskSecondaryFn.rawValue
+                           CGEventFlags.maskCommand.rawValue
+
+        // For normal keys, Fn can be a deliberate modifier. For F1...F20 it
+        // merely describes how the keyboard delivered the same function key.
+        if keyCode.map({ !functionKeyCodes.contains($0) }) ?? true {
+            mask |= CGEventFlags.maskSecondaryFn.rawValue
+        }
         return flags & mask
     }
 
@@ -225,8 +242,11 @@ final class PushToTalkManager {
     /// Handle keyboard event
     private func handleEvent(type: CGEventType, event: CGEvent) {
         let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
-        let flags = CustomHotkey.normalizedModifiers(event.flags.rawValue)
-        let expectedFlags = CustomHotkey.normalizedModifiers(triggerKey.modifierFlags)
+        let flags = CustomHotkey.normalizedModifiers(event.flags.rawValue, keyCode: keyCode)
+        let expectedFlags = CustomHotkey.normalizedModifiers(
+            triggerKey.modifierFlags,
+            keyCode: triggerKey.keyCode
+        )
 
         if triggerKey.isModifierOnly {
             // Handle pure modifier trigger (like Fn)

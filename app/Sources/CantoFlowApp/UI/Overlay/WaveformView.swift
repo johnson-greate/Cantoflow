@@ -7,27 +7,23 @@ enum WaveformMode {
     case idle       // Static flat line
 }
 
-/// A view that displays real-time audio waveform bars (compact version - 25% smaller)
+/// A fine-grained, audio-reactive waveform for the CantoFlow capsule.
 final class WaveformView: NSView {
-    /// Number of bars in the waveform (fewer for ultra-compact mode)
-    private let barCount: Int = 18
+    private let barCount: Int = 24
 
     /// Spacing between bars
-    private let barSpacing: CGFloat = 1.5
+    private let barSpacing: CGFloat = 2
 
     /// Minimum bar height
-    private let minBarHeight: CGFloat = 2
+    private let minBarHeight: CGFloat = 3
 
     /// Maximum bar height (as fraction of view height)
-    private let maxBarHeightFraction: CGFloat = 0.85
+    private let maxBarHeightFraction: CGFloat = 0.82
 
     /// Color of the bars
     var barColor: NSColor = NSColor.systemBlue {
         didSet { needsDisplay = true }
     }
-
-    /// Corner radius for each bar (smaller for compact)
-    private let barCornerRadius: CGFloat = 1
 
     /// Current audio levels (0.0 to 1.0)
     private var levels: [CGFloat] = []
@@ -126,7 +122,7 @@ final class WaveformView: NSView {
 
         case .processing:
             // Knight Rider style scanning effect
-            processingPhase += 0.05
+            processingPhase += 0.045
             if processingPhase > CGFloat.pi * 2 {
                 processingPhase -= CGFloat.pi * 2
             }
@@ -180,10 +176,11 @@ final class WaveformView: NSView {
             let y = (bounds.height - barHeight) / 2
 
             let rect = CGRect(x: x, y: y, width: barWidth, height: barHeight)
-            let path = NSBezierPath(roundedRect: rect, xRadius: barCornerRadius, yRadius: barCornerRadius)
+            let radius = min(barWidth / 2, barHeight / 2)
+            let path = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
 
             // Alpha based on level for more visual feedback
-            let alpha = 0.4 + level * 0.6
+            let alpha = 0.28 + level * 0.72
             barColor.withAlphaComponent(alpha).setFill()
             path.fill()
         }

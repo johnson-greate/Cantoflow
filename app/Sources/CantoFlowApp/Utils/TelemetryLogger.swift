@@ -3,6 +3,7 @@ import Foundation
 /// Telemetry entry for a single STT pipeline run
 struct TelemetryEntry: Encodable {
     let timestamp: String
+    let sttEngine: String
     let sttProfile: String
     let modelPath: String
     let audioDevice: String

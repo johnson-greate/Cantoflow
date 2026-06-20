@@ -20,6 +20,8 @@ app/CantoFlow.app/
 # Build artifacts
 app/.build/
 .out/
+**/__pycache__/
+*.pyc
 
 # API keys (never commit)
 **/openai_api_key.txt

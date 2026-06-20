@@ -52,6 +52,21 @@
    - Accessibility
    - Input Monitoring
 
+### 本機 ASR 模型切換（Apple Silicon）
+
+在 **Settings > Models** 可即時切換三個辨識引擎，下一次錄音生效：
+
+- **Whisper** — 現有 whisper.cpp + Metal 穩定基準
+- **SenseVoiceSmall INT8** — 234M 粵語模型，輕量快速
+- **Qwen3-ASR 0.6B MLX 8-bit** — Apple GPU 推論，支援 Cantonese 及 vocabulary context
+
+SenseVoice 與 Qwen 權重不會放進 Git repository；在 Models 頁按「安裝所選模型」即可下載至
+`~/Library/Application Support/CantoFlow/asr-runtime/`。開發者也可一次安裝：
+
+```bash
+./scripts/install-local-asr.sh --engine all
+```
+
    你可以點擊右上角 Menu Bar 圖示進入 **Settings...** 去自訂你最順手的錄音快捷鍵，設定好後，長按該鍵說出廣東話，放開按鍵後，文字就會自動輸入到你當前的視窗。若要提升專有名詞、香港用詞與 vocab 校正效果，可在 **Settings > API Keys** 輸入 `DASHSCOPE_API_KEY` 啟用 Qwen 潤飾。
 
 ---
