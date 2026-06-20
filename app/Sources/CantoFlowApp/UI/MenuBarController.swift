@@ -547,6 +547,12 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
     private func startRecordingNow() {
         guard state == .idle else { return }
 
+        // Don't start a second ASR consumer while a file batch owns the engine.
+        guard ASRWorkCoordinator.shared.tryAcquire(.pushToTalk) else {
+            NotificationManager.shared.notify("檔案轉錄進行中，請先停止再錄音。")
+            return
+        }
+
         do {
             // Set up audio level callback for waveform visualization BEFORE starting.
             // RecordingOverlayPanel.shared is always alive; no weak capture needed.
@@ -558,6 +564,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
             state = .recording
             showRecordingOverlay()
         } catch {
+            ASRWorkCoordinator.shared.release(.pushToTalk)
             NotificationManager.shared.notifyError("錄音啟動失敗: \(error.localizedDescription)")
             state = .idle
         }
@@ -582,6 +589,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
                         sttMs: result.sttMs,
                         polishMs: result.polishMs
                     )
+                    ASRWorkCoordinator.shared.release(.pushToTalk)
                     self.state = .idle
                     self.pushToTalkManager?.markProcessingComplete()
                 }
@@ -595,6 +603,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
                     default:
                         NotificationManager.shared.notifyError(error.localizedDescription)
                     }
+                    ASRWorkCoordinator.shared.release(.pushToTalk)
                     self.state = .idle
                     self.pushToTalkManager?.markProcessingComplete()
                 }
@@ -603,6 +612,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
                     guard let self else { return }
                     self.hideOverlay()
                     NotificationManager.shared.notifyError(error.localizedDescription)
+                    ASRWorkCoordinator.shared.release(.pushToTalk)
                     self.state = .idle
                     self.pushToTalkManager?.markProcessingComplete()
                 }
@@ -613,6 +623,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
     private func cancelRecording() {
         guard state == .recording else { return }
         pipeline.cancelRecording()
+        ASRWorkCoordinator.shared.release(.pushToTalk)
         hideOverlay()
         state = .idle
     }
