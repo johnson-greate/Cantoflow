@@ -32,6 +32,9 @@ app/.build/
 # Screenshots
 screenshot/
 
+# Transcribe design reference screenshots (local only; feature-list.md is committed)
+docs/transcribe/refs/
+
 # Environment Variables
 .env
 
