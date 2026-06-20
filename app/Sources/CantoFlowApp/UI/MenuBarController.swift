@@ -30,6 +30,9 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
     private var hintItem: NSMenuItem?
     private var inputDeviceItem: NSMenuItem?
 
+    // Output style (polish style) radio items (first-layer)
+    private var polishStyleItems: [NSMenuItem] = []
+
     /// Reference to PushToTalkManager (set by AppDelegate)
     weak var pushToTalkManager: PushToTalkManager?
 
@@ -85,6 +88,7 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
     }
 
     private func setupMenu() {
+        menu.delegate = self
         // ── Usage hint ─────────────────────────────────────────────────────────
         let hint = NSMenuItem(title: "按住 Fn 或 F15 錄音", action: nil, keyEquivalent: "")
         hint.isEnabled = false
@@ -109,6 +113,24 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         menu.addItem(toggle)
         toggleItem = toggle
         applyBoldTitle("開始錄音", to: toggle)
+
+        // ── Output style (polish style) — flat radio items on the first layer ───
+        let styleHeader = NSMenuItem(title: "輸出風格", action: nil, keyEquivalent: "")
+        styleHeader.isEnabled = false
+        menu.addItem(styleHeader)
+
+        polishStyleItems = PolishStyle.allCases.map { style in
+            let item = NSMenuItem(
+                title: style.displayName,
+                action: #selector(selectPolishStyle(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = style.rawValue
+            menu.addItem(item)
+            return item
+        }
+        updatePolishStyleChecks()
 
         menu.addItem(.separator())
 
@@ -177,6 +199,15 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         openRuntimeLog.target = self
         openRuntimeLog.image = menuImage("doc.text.magnifyingglass")
         menu.addItem(openRuntimeLog)
+
+        let runningInfo = NSMenuItem(
+            title: "運行資訊…",
+            action: #selector(showRunningInfo),
+            keyEquivalent: ""
+        )
+        runningInfo.target = self
+        runningInfo.image = menuImage("internaldrive")
+        menu.addItem(runningInfo)
 
         menu.addItem(.separator())
 
@@ -360,6 +391,41 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
 
     @objc private func openSettings() {
         SettingsWindowController.shared.show()
+    }
+
+    @objc private func showRunningInfo() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let info = RunningInfo.collect(config: self.config)
+            DispatchQueue.main.async {
+                let alert = NSAlert()
+                alert.messageText = "CantoFlow 運行資訊"
+                alert.informativeText = info.summary()
+                alert.addButton(withTitle: "好")
+                alert.addButton(withTitle: "複製")
+                NSApp.activate(ignoringOtherApps: true)
+                if alert.runModal() == .alertSecondButtonReturn {
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString("CantoFlow 運行資訊\n\(info.summary())", forType: .string)
+                }
+            }
+        }
+    }
+
+    @objc private func selectPolishStyle(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String else { return }
+        UserDefaults.standard.set(raw, forKey: "polishStyle")
+        updatePolishStyleChecks()
+    }
+
+    /// Reflect the current polishStyle (which may also change in Settings) as a
+    /// checkmark on the matching submenu item.
+    private func updatePolishStyleChecks() {
+        let current = UserDefaults.standard.string(forKey: "polishStyle") ?? PolishStyle.cantonese.rawValue
+        polishStyleItems.forEach { item in
+            item.state = (item.representedObject as? String == current) ? .on : .off
+        }
     }
 
     @objc private func quitApp() {
@@ -574,5 +640,17 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         NotificationManager.shared.notifyError(
             "快捷鍵監聽已失效，請重新啟動 CantoFlow。如持續出現，請到系統設定重新開啟「輔助使用」及「輸入監控」權限。"
         )
+    }
+}
+
+// MARK: - NSMenuDelegate
+
+extension MenuBarController: NSMenuDelegate {
+    /// Refresh the output-style checkmarks when the submenu opens, so a change
+    /// made in Settings is reflected here too.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu === self.menu {
+            updatePolishStyleChecks()
+        }
     }
 }

@@ -72,7 +72,7 @@ struct GeneralTab: View {
             Section("Shortcut Key") {
                 HotkeyRecorderView()
                 
-                Text("Click the box above, then type any key or key combination to record it (e.g. F12, Option+Space, or Fn).")
+                Text("Click the box above, then press any key or modifier to record it (e.g. F12, Option+Space, Fn, or 右 ⌘ Right Command for Spokenly-style push-to-talk).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1523,10 +1523,14 @@ struct HotkeyRecorderView: View {
         case 105: display = "F13"
         case 107: display = "F14"
         case 113: display = "F15"
-        case 55, 54: display = "Command"
-        case 56, 60: display = "Shift"
-        case 58, 61: display = "Option"
-        case 59, 62: display = "Control"
+        case 54: display = "右 ⌘ (Right Command)"
+        case 55: display = "左 ⌘ (Left Command)"
+        case 60: display = "右 ⇧ (Right Shift)"
+        case 56: display = "左 ⇧ (Left Shift)"
+        case 61: display = "右 ⌥ (Right Option)"
+        case 58: display = "左 ⌥ (Left Option)"
+        case 62: display = "右 ⌃ (Right Control)"
+        case 59: display = "左 ⌃ (Left Control)"
         case 49: display = "Space"
         case 36: display = "Return"
         case 53: display = "Escape"

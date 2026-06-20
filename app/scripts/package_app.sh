@@ -29,6 +29,9 @@ cp "${PROJECT_DIR}/.build/release/cantoflow" "${MACOS_DIR}/cantoflow"
 # Copy Info.plist
 cp "${PROJECT_DIR}/Resources/Info.plist" "${CONTENTS_DIR}/Info.plist"
 
+# Copy app icon (referenced by Info.plist CFBundleIconFile)
+cp "${PROJECT_DIR}/Resources/AppIcon.icns" "${RESOURCES_DIR}/AppIcon.icns"
+
 # Bundle the optional local-ASR bridge and installer so Models remains usable
 # when CantoFlow.app is launched directly instead of from a source checkout.
 cp "$(dirname "${PROJECT_DIR}")/scripts/local_asr_bridge.py" "${RESOURCES_DIR}/asr/"

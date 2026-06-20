@@ -35,18 +35,21 @@ struct PolishResult {
 enum PolishStyle: String, CaseIterable {
     case cantonese = "cantonese"
     case formal    = "formal"
+    case mandarin  = "mandarin"
 
     var displayName: String {
         switch self {
-        case .cantonese: return "廣東話口語"
-        case .formal:    return "正式書面語"
+        case .cantonese: return "粵語口語"
+        case .formal:    return "繁體中文書面語"
+        case .mandarin:  return "簡體普通話"
         }
     }
 
     var styleDescription: String {
         switch self {
         case .cantonese: return "保留香港粵語口語、常用字同語氣，避免改成書面語。"
-        case .formal:    return "中國大陸標準書面語，用詞嚴謹規範。"
+        case .formal:    return "繁體中文標準書面語，用詞嚴謹規範。"
+        case .mandarin:  return "簡體字輸出，普通話自然口語（大陸講法）。"
         }
     }
 
@@ -81,6 +84,21 @@ enum PolishStyle: String, CaseIterable {
             7. 對地名、人名、品牌名等專有名詞採取保守策略：除非非常確定，否則保留原文
             8. 若發現無意義的英文音譯拼音（例如將「測試」誤認為 "Thick see"、"Chack see"、"tixy" 等），請根據上下文自動修正為合理的廣東話中文字（如「測試」）。
             9. 必須以繁體中文輸出，將所有簡體字轉換為繁體字
+            """
+        case .mandarin:
+            return """
+            你是一位精通中國大陸普通話的資深編輯。請把語音識別粗稿整理成自然、口語化的普通話文字。
+
+            請嚴格遵守以下規則：
+            1. 保持原意，不要擴寫，不要總結，不要自行補充資訊。
+            2. 用大陸普通話的自然口語表達（例如「的、了、這個、那個、然後、就是、可以」），把粵語字詞改成對應普通話說法，例如「嘅」→「的」、「喺」→「在」、「咗」→「了」、「唔」→「不」、「攞／拎」→「拿」、「搵」→「找」、「係」→「是」、「畀」→「給」。
+            3. 保留自然口語語氣，不要改成生硬書面語；這是口語模式，不是公文。
+            4. 刪去說話時的猶豫語、停頓助語詞，例如「誒」「呃」「嗯」「唉」，以及無意義的重複（如「就是就是」「那個那個」）。
+            5. 修正明顯的語音識別錯字、同音字、近音字、英文音譯拼音，以及不自然的斷句與標點。
+            6. 若用戶詞庫或常用詞庫中有對應詞，請優先採用詞庫內的寫法。
+            7. 對地名、人名、公司名、產品名等專有名詞採取保守策略：只有在高度確定時才作修正。
+            8. 必須輸出簡體中文；若輸入出現繁體字，請轉為簡體字。
+            9. 只輸出整理後文字，不要加引號、不要解釋、不要列點、不要輸出「修正後：」。
             """
         }
     }
@@ -129,6 +147,13 @@ final class TextPolisher {
             """
         case .formal:
             return rawText
+        case .mandarin:
+            return """
+            以下是 ASR 轉錄粗稿。請按「簡體普通話口語模式」整理成自然的普通話，並輸出簡體字。
+
+            粗稿：
+            \(rawText)
+            """
         }
     }
 
