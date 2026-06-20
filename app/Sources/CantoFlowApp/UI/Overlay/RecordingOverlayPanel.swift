@@ -26,6 +26,7 @@ final class RecordingOverlayPanel: NSPanel {
     private let doneButton = NSButton()
     private let statusLabel = NSTextField()
     private let elapsedLabel = NSTextField()
+    private let deviceLabel = NSTextField()
     private let stateDot = NSView()
     private let waveformView = WaveformView()
 
@@ -43,6 +44,8 @@ final class RecordingOverlayPanel: NSPanel {
 
     private static let panelWidth: CGFloat = 272
     private static let panelHeight: CGFloat = 56
+    private static let deviceLineHeight: CGFloat = 15
+    private static let totalHeight: CGFloat = panelHeight + deviceLineHeight
     private static let cornerRadius: CGFloat = 28
     private static let bottomMargin: CGFloat = 80
     private static let accentColor = NSColor(
@@ -118,7 +121,7 @@ final class RecordingOverlayPanel: NSPanel {
     private func setupUI() {
         // A dark graphite glass surface gives CantoFlow its own identity while
         // retaining enough translucency to feel native on macOS.
-        containerView.frame = NSRect(x: 0, y: 0, width: Self.panelWidth, height: Self.panelHeight)
+        containerView.frame = NSRect(x: 0, y: Self.deviceLineHeight, width: Self.panelWidth, height: Self.panelHeight)
         containerView.material = .hudWindow
         containerView.blendingMode = .behindWindow
         containerView.state = .active
@@ -133,7 +136,33 @@ final class RecordingOverlayPanel: NSPanel {
         containerView.layer?.borderWidth = 0.7
         containerView.layer?.borderColor = NSColor.white.withAlphaComponent(0.14).cgColor
 
-        contentView = containerView
+        // Transparent root holds the pill on top and a tiny device line below it.
+        let rootView = NSView(frame: NSRect(x: 0, y: 0, width: Self.panelWidth, height: Self.totalHeight))
+
+        // Small line under the capsule showing the live recording device.
+        deviceLabel.frame = NSRect(x: 8, y: 0, width: Self.panelWidth - 16, height: Self.deviceLineHeight)
+        deviceLabel.alignment = .center
+        deviceLabel.font = .systemFont(ofSize: 9, weight: .medium)
+        deviceLabel.textColor = NSColor.white.withAlphaComponent(0.62)
+        deviceLabel.isBezeled = false
+        deviceLabel.drawsBackground = false
+        deviceLabel.isEditable = false
+        deviceLabel.isSelectable = false
+        deviceLabel.lineBreakMode = .byTruncatingTail
+        deviceLabel.stringValue = ""
+        // Drop shadow so the text stays legible over any desktop behind the panel.
+        deviceLabel.wantsLayer = true
+        deviceLabel.shadow = {
+            let shadow = NSShadow()
+            shadow.shadowColor = NSColor.black.withAlphaComponent(0.7)
+            shadow.shadowBlurRadius = 2
+            shadow.shadowOffset = .zero
+            return shadow
+        }()
+
+        rootView.addSubview(containerView)
+        rootView.addSubview(deviceLabel)
+        contentView = rootView
 
         // Quiet secondary action.
         cancelButton.frame = NSRect(x: 11, y: 15, width: 26, height: 26)
@@ -237,6 +266,11 @@ final class RecordingOverlayPanel: NSPanel {
         switch overlayState {
         case .recording:
             startElapsedTimer()
+            // Show the device actually being recorded (the engine uses the macOS
+            // system-default input, so query that rather than the saved preference).
+            let deviceName = AudioDeviceManager.shared.defaultInputDevice()?.name ?? "—"
+            deviceLabel.stringValue = "🎙 \(deviceName)"
+            deviceLabel.isHidden = false
             statusLabel.isHidden = true
             elapsedLabel.isHidden = false
             stateDot.isHidden = false
@@ -404,7 +438,7 @@ final class RecordingOverlayPanel: NSPanel {
         let x = screenFrame.origin.x + (screenFrame.width - Self.panelWidth) / 2
         let y = screenFrame.origin.y + Self.bottomMargin
 
-        targetFrame = NSRect(x: x, y: y, width: Self.panelWidth, height: Self.panelHeight)
+        targetFrame = NSRect(x: x, y: y, width: Self.panelWidth, height: Self.totalHeight)
     }
 
     // MARK: - Actions
