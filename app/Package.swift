@@ -21,6 +21,11 @@ let package = Package(
                 .linkedFramework("CoreGraphics"),
                 .linkedFramework("ApplicationServices")
             ]
+        ),
+        .testTarget(
+            name: "CantoFlowAppTests",
+            dependencies: ["CantoFlowApp"],
+            path: "Tests/CantoFlowAppTests"
         )
     ]
 )
