@@ -23,7 +23,8 @@ enum AudioCaptureError: Error, LocalizedError {
 
 /// Audio capture using AVAudioEngine (native macOS, no ffmpeg dependency)
 final class AudioCapture {
-    private let audioEngine = AVAudioEngine()
+    // Recreated for each recording — see startRecording().
+    private var audioEngine = AVAudioEngine()
     private var audioFile: AVAudioFile?
     private var isRecording = false
     private var recordingURL: URL?
@@ -80,6 +81,14 @@ final class AudioCapture {
         guard !isRecording else {
             throw AudioCaptureError.recordingInProgress
         }
+
+        // Use a FRESH engine each recording so it always binds to the CURRENT
+        // system-default input device. A long-lived engine goes stale when the
+        // audio hardware changes (AirPods connect/disconnect) — its inputNode
+        // stays bound to the old device and recording silently fails until the
+        // app is restarted. A new engine here picks up the current default every
+        // time, so device hot-swaps no longer need a quit/relaunch.
+        audioEngine = AVAudioEngine()
 
         activeInputDeviceName = AudioDeviceManager.shared.configureInputDevice(for: audioEngine)
         let inputNode = audioEngine.inputNode
