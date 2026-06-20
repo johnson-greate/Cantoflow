@@ -87,6 +87,23 @@ enum FileTranscriptionStatus: Equatable {
         }
     }
 
+    /// Traditional-Chinese status label for the queue (PRD §8.3).
+    var displayText: String {
+        switch self {
+        case .queued: return "等候中"
+        case .validating: return "檢查檔案…"
+        case .preparing(let p): return "準備音訊… \(Int(p * 100))%"
+        case .transcribing(_, let chunk, let total):
+            return total > 0 ? "正在轉錄 · Chunk \(chunk)/\(total)" : "正在轉錄…"
+        case .transcriptReady: return "逐字稿已完成"
+        case .generatingNotes: return "正在生成會議記錄…"
+        case .complete: return "會議記錄已完成"
+        case .completedWithWarning: return "已完成，但部分內容可能不完整"
+        case .failed(let reason): return "失敗：\(reason)"
+        case .cancelled: return "已停止"
+        }
+    }
+
     /// A transcript exists and can be copied / exported / turned into notes.
     var hasTranscript: Bool {
         switch self {

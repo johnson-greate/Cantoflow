@@ -77,6 +77,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let batchActive = MainActor.assumeIsolated {
+            TranscribeWindowController.shared?.isBatchActive ?? false
+        }
+        guard batchActive else { return .terminateNow }
+
+        let alert = NSAlert()
+        alert.messageText = "檔案轉錄仍在進行"
+        alert.informativeText = "結束 CantoFlow 會停止目前的轉錄；已完成的逐字稿會保留。"
+        alert.addButton(withTitle: "停止並結束")
+        alert.addButton(withTitle: "取消")
+        if alert.runModal() == .alertFirstButtonReturn {
+            MainActor.assumeIsolated { TranscribeWindowController.shared?.store.stop() }
+            return .terminateNow
+        }
+        return .terminateCancel
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         RuntimeHealthMonitor.shared.markGracefulTermination(reason: "app_terminate")
         UserDefaults.standard.removeObserver(self, forKeyPath: "customHotkey")

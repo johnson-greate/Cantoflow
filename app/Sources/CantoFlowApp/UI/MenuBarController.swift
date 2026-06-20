@@ -33,6 +33,9 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
     // Output style (polish style) radio items (first-layer)
     private var polishStyleItems: [NSMenuItem] = []
 
+    // File transcription menu item (title reflects batch-active state)
+    private var transcribeItem: NSMenuItem?
+
     /// Reference to PushToTalkManager (set by AppDelegate)
     weak var pushToTalkManager: PushToTalkManager?
 
@@ -113,6 +116,17 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         menu.addItem(toggle)
         toggleItem = toggle
         applyBoldTitle("開始錄音", to: toggle)
+
+        // ── File transcription ─────────────────────────────────────────────────
+        let transcribe = NSMenuItem(
+            title: "轉錄檔案…",
+            action: #selector(openTranscribe),
+            keyEquivalent: ""
+        )
+        transcribe.target = self
+        transcribe.image = menuImage("waveform.badge.plus")
+        menu.addItem(transcribe)
+        transcribeItem = transcribe
 
         // ── Output style (polish style) — flat radio items on the first layer ───
         let styleHeader = NSMenuItem(title: "輸出風格", action: nil, keyEquivalent: "")
@@ -393,6 +407,12 @@ final class MenuBarController: NSObject, PushToTalkDelegate {
         SettingsWindowController.shared.show()
     }
 
+    @objc private func openTranscribe() {
+        MainActor.assumeIsolated {
+            TranscribeWindowController.showShared(config: config)
+        }
+    }
+
     @objc private func showRunningInfo() {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
@@ -662,6 +682,8 @@ extension MenuBarController: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         if menu === self.menu {
             updatePolishStyleChecks()
+            let active = MainActor.assumeIsolated { TranscribeWindowController.shared?.isBatchActive ?? false }
+            transcribeItem?.title = active ? "檔案轉錄中…" : "轉錄檔案…"
         }
     }
 }
