@@ -82,9 +82,19 @@ install_qwen() {
     # ("Qwen/Qwen3-ASR-0.6B") via the local HF cache at runtime, so the snapshot
     # must stay. (Earlier builds deleted it, which broke offline loading with
     # "Cannot find an appropriate cached snapshot folder".)
+    # Match the runtime loader: refs/main must point to a snapshot that has
+    # config.json + tokenizer (vocab.json, merges.txt). A bare repo / orphan
+    # snapshot is NOT usable offline.
+    local repo_dir="$HF_HOME/hub/models--Qwen--Qwen3-ASR-0.6B"
+    local sha snapshot_ok=0
+    sha="$(tr -d '[:space:]' < "$repo_dir/refs/main" 2>/dev/null || true)"
+    if [[ -n "$sha" && -f "$repo_dir/snapshots/$sha/config.json" \
+        && -f "$repo_dir/snapshots/$sha/vocab.json" && -f "$repo_dir/snapshots/$sha/merges.txt" ]]; then
+        snapshot_ok=1
+    fi
     if [[ -f "$QWEN_DIR/config.json" ]] \
         && find "$QWEN_DIR" -maxdepth 1 -name '*.safetensors' -print -quit | grep -q . \
-        && find "$HF_HOME/hub/models--Qwen--Qwen3-ASR-0.6B/snapshots" -name 'config.json' -print -quit 2>/dev/null | grep -q .; then
+        && [[ "$snapshot_ok" == "1" ]]; then
         echo "Qwen3-ASR 0.6B 8-bit is already installed."
         return
     fi

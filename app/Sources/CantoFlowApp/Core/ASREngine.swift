@@ -85,16 +85,19 @@ struct ASRRuntimePaths {
     var senseVoiceTokens: URL { senseVoiceDirectory.appendingPathComponent("tokens.txt") }
     var qwenModelDirectory: URL { modelsDirectory.appendingPathComponent(Self.qwenDirectoryName, isDirectory: true) }
 
-    /// True only if the app-local HF cache holds a USABLE snapshot for `repo`
-    /// (a snapshots/<sha> dir containing config.json) — a bare/partial repo
-    /// folder does not count.
-    func hasUsableHFSnapshot(repo: String) -> Bool {
+    /// True only if the app-local HF cache holds a USABLE snapshot for `repo`,
+    /// matching how the offline loader resolves it: follow `refs/main` to the
+    /// pinned snapshot and require the files mlx_qwen3_asr actually reads
+    /// (config + tokenizer). Orphan/partial snapshots do not count.
+    func hasUsableHFSnapshot(repo: String, requiredFiles: [String] = ["config.json", "vocab.json", "merges.txt"]) -> Bool {
         let fm = FileManager.default
-        let snapshots = root.appendingPathComponent("cache/huggingface/hub/\(repo)/snapshots", isDirectory: true)
-        guard let dirs = try? fm.contentsOfDirectory(at: snapshots, includingPropertiesForKeys: nil) else {
+        let repoDir = root.appendingPathComponent("cache/huggingface/hub/\(repo)", isDirectory: true)
+        guard let sha = (try? String(contentsOf: repoDir.appendingPathComponent("refs/main"), encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !sha.isEmpty else {
             return false
         }
-        return dirs.contains { fm.fileExists(atPath: $0.appendingPathComponent("config.json").path) }
+        let snapshot = repoDir.appendingPathComponent("snapshots/\(sha)", isDirectory: true)
+        return requiredFiles.allSatisfy { fm.fileExists(atPath: snapshot.appendingPathComponent($0).path) }
     }
 
     func readiness(for engine: STTEngine, config: AppConfig) -> (ready: Bool, message: String) {
