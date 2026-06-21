@@ -44,6 +44,7 @@ struct GeneralTab: View {
     @AppStorage("soundFeedback") private var soundFeedback = true
     @AppStorage("polishStyle") private var polishStyleRaw: String = PolishStyle.cantonese.rawValue
     @AppStorage(AppConfig.polishProviderDefaultsKey) private var polishProviderRaw: String = AppConfig.PolishProvider.auto.rawValue
+    @AppStorage(AppConfig.notesProviderDefaultsKey) private var notesProviderRaw: String = "follow"
     @AppStorage(AudioDeviceManager.preferredInputDeviceDefaultsKey) private var preferredInputDeviceUID: String = ""
     @State private var inputDevices: [AudioInputDevice] = AudioDeviceManager.shared.availableInputDevices()
     @State private var startupStatusMessage: String = ""
@@ -121,6 +122,18 @@ struct GeneralTab: View {
                     .foregroundStyle(.secondary)
 
                 Text("選擇會在下一次錄音生效。DeepSeek V4 Flash 以 non-thinking 模式執行，優先降低潤飾等待時間。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("會議記錄 LLM") {
+                Picker("生成會議記錄用", selection: $notesProviderRaw) {
+                    Text("跟隨潤飾 LLM").tag("follow")
+                    ForEach(AppConfig.PolishProvider.allCases.filter { $0 != .none && $0 != .auto }, id: \.rawValue) { provider in
+                        Text(provider.displayName).tag(provider.rawValue)
+                    }
+                }
+                Text("會議記錄可用獨立的 LLM（例如 push-to-talk 用快速雲端模型，會議記錄用本機模型保私隱）。選「本機」前請先在 API Keys 設定 LOCAL_LLM_ENDPOINT。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

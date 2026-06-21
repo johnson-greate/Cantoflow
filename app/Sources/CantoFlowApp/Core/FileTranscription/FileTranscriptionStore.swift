@@ -15,7 +15,9 @@ final class FileTranscriptionStore: ObservableObject {
     private let workspace = TranscriptionWorkspace()
     private let paths = ASRRuntimePaths()
     private let audioPrep = AudioPreparationService()
-    private lazy var notesGenerator = MeetingNotesGenerator(client: LLMCompletionClient(config: config))
+    private lazy var notesGenerator = MeetingNotesGenerator(
+        client: LLMCompletionClient(config: config, selectedProvider: { [config] in config.activeNotesProvider })
+    )
 
     private var runner: FileTranscriptionRunner?
     private var batchTask: Task<Void, Never>?

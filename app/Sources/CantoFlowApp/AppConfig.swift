@@ -78,6 +78,16 @@ struct AppConfig {
         return PolishProvider(rawValue: raw) ?? polishProvider
     }
 
+    /// Optional separate provider for meeting-notes generation. "follow" (default)
+    /// or unset → use the same provider as push-to-talk polish. This lets PTT stay
+    /// on a fast cloud model while notes run on a private local model (or vice versa).
+    static let notesProviderDefaultsKey = "notesProvider"
+    var activeNotesProvider: PolishProvider {
+        let raw = UserDefaults.standard.string(forKey: Self.notesProviderDefaultsKey) ?? "follow"
+        if raw == "follow" || raw.isEmpty { return activePolishProvider }
+        return PolishProvider(rawValue: raw) ?? activePolishProvider
+    }
+
     var localASRBridge: URL {
         let projectCopy = projectRoot.appendingPathComponent("scripts/local_asr_bridge.py")
         if FileManager.default.fileExists(atPath: projectCopy.path) {

@@ -209,9 +209,13 @@ enum LLMResponseParser {
 /// behavior for polish requests is preserved byte-for-byte.
 final class LLMCompletionClient: LLMCompleting {
     private let config: AppConfig
+    /// Which provider this client resolves. Defaults to the polish provider so
+    /// push-to-talk behavior is unchanged; meeting notes can pass its own.
+    private let selectedProvider: () -> AppConfig.PolishProvider
 
-    init(config: AppConfig) {
+    init(config: AppConfig, selectedProvider: (() -> AppConfig.PolishProvider)? = nil) {
         self.config = config
+        self.selectedProvider = selectedProvider ?? { config.activePolishProvider }
     }
 
     // MARK: - Credential resolution (env precedence, then UserDefaults)
@@ -260,7 +264,7 @@ final class LLMCompletionClient: LLMCompleting {
     }
 
     func resolvedProvider() -> AppConfig.PolishProvider {
-        LLMProviderResolver.resolve(selected: config.activePolishProvider, available: availableProviders())
+        LLMProviderResolver.resolve(selected: selectedProvider(), available: availableProviders())
     }
 
     func isAvailable() -> Bool { resolvedProvider() != .none }

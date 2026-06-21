@@ -23,6 +23,27 @@ final class LLMProviderResolverTests: XCTestCase {
 /// Characterization: these assert the EXACT request shape that push-to-talk
 /// polish has always sent (1024 cap, DeepSeek thinking disabled, Qwen
 /// enable_thinking false, per-provider params/urls). Do not relax.
+final class NotesProviderResolutionTests: XCTestCase {
+    func testNotesProviderFollowsOrOverridesPolish() {
+        let d = UserDefaults.standard
+        defer {
+            d.removeObject(forKey: AppConfig.polishProviderDefaultsKey)
+            d.removeObject(forKey: AppConfig.notesProviderDefaultsKey)
+        }
+        let config = AppConfig(projectRoot: URL(fileURLWithPath: "/tmp"))
+        d.set(AppConfig.PolishProvider.deepseek.rawValue, forKey: AppConfig.polishProviderDefaultsKey)
+
+        d.removeObject(forKey: AppConfig.notesProviderDefaultsKey)
+        XCTAssertEqual(config.activeNotesProvider, .deepseek, "unset → follow polish")
+
+        d.set("follow", forKey: AppConfig.notesProviderDefaultsKey)
+        XCTAssertEqual(config.activeNotesProvider, .deepseek)
+
+        d.set(AppConfig.PolishProvider.local.rawValue, forKey: AppConfig.notesProviderDefaultsKey)
+        XCTAssertEqual(config.activeNotesProvider, .local, "explicit override")
+    }
+}
+
 final class LLMRequestSpecTests: XCTestCase {
     private func polishRequest() -> LLMCompletionRequest {
         LLMCompletionRequest(systemPrompt: "SYS", userPrompt: "USR", temperature: 0.2, maxOutputTokens: 1024)
