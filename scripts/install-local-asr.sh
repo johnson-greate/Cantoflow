@@ -42,6 +42,10 @@ fi
 PYTHON="$VENV/bin/python3"
 export UV_CACHE_DIR="$ASR_HOME/cache/uv"
 export HF_HOME="$ASR_HOME/cache/huggingface"
+# Override both cache vars so a user-set value (possibly on a removable volume)
+# can't redirect the download away from the app-local cache.
+export HF_HUB_CACHE="$ASR_HOME/cache/huggingface/hub"
+export HUGGINGFACE_HUB_CACHE="$ASR_HOME/cache/huggingface/hub"
 
 install_common() {
     "$UV" pip install --python "$PYTHON" "opencc-python-reimplemented==0.1.7"

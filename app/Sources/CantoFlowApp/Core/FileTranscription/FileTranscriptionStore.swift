@@ -18,8 +18,18 @@ final class FileTranscriptionStore: ObservableObject {
     private lazy var notesGenerator = MeetingNotesGenerator(client: LLMCompletionClient(config: config))
 
     private var runner: FileTranscriptionRunner?
+    private var batchTask: Task<Void, Never>?
+    private var cancelBox = CancelBox()
     private var currentBatchID: UUID?
     private var activityToken: NSObjectProtocol?
+
+    /// Thread-safe cancel flag readable from the off-main audio-prep task.
+    private final class CancelBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var flag = false
+        var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return flag }
+        func cancel() { lock.lock(); flag = true; lock.unlock() }
+    }
 
     // Progress bookkeeping for the ASR stage.
     private var asrTotalDuration: Double = 0
@@ -144,16 +154,23 @@ final class FileTranscriptionStore: ObservableObject {
                     .deletingLastPathComponent()
                     .appendingPathComponent("notes", isDirectory: true)
                 try? FileManager.default.createDirectory(at: notesDir, withIntermediateDirectories: true)
+                // Fresh filename each generation so the detail view (keyed on the
+                // notes URL) reliably reloads after a regenerate; the previous
+                // notes file is only abandoned once the new one is written.
                 let notesURL = notesDir.appendingPathComponent(
-                    TranscriptionWorkspace.notesBasename(forSource: source) + ".md"
+                    "\(TranscriptionWorkspace.notesBasename(forSource: source))-\(UUID().uuidString.prefix(8)).md"
                 )
                 try self.workspace.atomicWrite(result.markdown, to: notesURL)
 
                 guard let i = self.items.firstIndex(where: { $0.id == id }) else { return }
+                let oldNotesURL = self.items[i].meetingNotesURL
                 self.items[i].meetingNotesURL = notesURL
-                self.items[i].status = result.formatWarning
-                    ? .completedWithWarning("會議記錄格式可能不完整")
-                    : .complete
+                self.items[i].status = .complete
+                if result.formatWarning {
+                    self.statusMessage = "會議記錄已生成，但格式可能不完整"
+                }
+                // Remove the superseded notes file after the swap.
+                if let oldNotesURL, oldNotesURL != notesURL { try? FileManager.default.removeItem(at: oldNotesURL) }
             } catch {
                 // Keep any previous notes; just restore status + surface error.
                 guard let i = self.items.firstIndex(where: { $0.id == id }) else { return }
@@ -179,6 +196,7 @@ final class FileTranscriptionStore: ObservableObject {
 
         currentBatchID = batchID
         isBatchActive = true
+        cancelBox = CancelBox()
         statusMessage = ""
         overallProgress = 0
         asrCompletedDuration = 0
@@ -192,13 +210,16 @@ final class FileTranscriptionStore: ObservableObject {
         let runner = FileTranscriptionRunner()
         self.runner = runner
 
-        Task { [weak self] in
+        batchTask = Task { [weak self] in
             await self?.runBatch(batchID: batchID, queuedIDs: queuedIDs, runner: runner)
         }
     }
 
     func stop() {
-        runner?.cancel()
+        guard isBatchActive else { return }
+        cancelBox.cancel()          // halts the audio-preparation stage (off-main)
+        runner?.cancel()            // terminates the worker if it has started
+        batchTask?.cancel()
     }
 
     private func finishBatch(_ batchID: UUID) {
@@ -212,6 +233,7 @@ final class FileTranscriptionStore: ObservableObject {
             workspace.removeTempWAV(batchID: batchID, fileID: id)
         }
         runner = nil
+        batchTask = nil
         currentBatchID = nil
         isBatchActive = false
     }
@@ -230,32 +252,59 @@ final class FileTranscriptionStore: ObservableObject {
             return
         }
 
+        // Disk preflight (FR-015): canonical-WAV temp space estimate + headroom.
+        let estimatedTemp = queuedIDs
+            .compactMap { id in items.first { $0.id == id }?.durationSeconds }
+            .reduce(Int64(0)) { $0 + TranscribeLimits.estimatedTempBytes(forAudioSeconds: $1) }
+        if let available = try? workspace.transcriptsDirectory(batchID)
+            .resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+            .volumeAvailableCapacityForImportantUsage,
+           available < estimatedTemp {
+            let need = ByteCountFormatter.string(fromByteCount: estimatedTemp, countStyle: .file)
+            for id in queuedIDs { setStatus(id, .failed("沒有足夠空間準備音頻（約需 \(need)）")) }
+            finishBatch(batchID)
+            return
+        }
+
+        let cancelBox = self.cancelBox
+
         // Stage 1: convert each input to canonical WAV (sequential, off-main).
         struct Prepared { let id: UUID; let wav: URL; let outputTxt: URL; let duration: Double }
         var prepared: [Prepared] = []
         for id in queuedIDs {
+            if cancelBox.isCancelled { setStatus(id, .cancelled); continue }
             guard let item = items.first(where: { $0.id == id }) else { continue }
             setStatus(id, .preparing(progress: 0))
             let wav = workspace.tempWAVURL(batchID: batchID, fileID: id)
             let source = item.sourceURL
             do {
-                try await Task.detached(priority: .userInitiated) { [audioPrep] in
-                    try audioPrep.prepare(source, to: wav) { progress in
+                try await Task.detached(priority: .userInitiated) { [audioPrep, cancelBox] in
+                    try audioPrep.prepare(source, to: wav, isCancelled: { cancelBox.isCancelled }) { progress in
                         Task { @MainActor in self.setStatus(id, .preparing(progress: progress)) }
                     }
                 }.value
+                // Per-item id suffix so two same-named sources from different
+                // folders don't share (and overwrite) one transcript file.
                 let base = TranscriptionWorkspace.transcriptBasename(forSource: source)
                 let outputTxt = workspace.transcriptsDirectory(batchID)
-                    .appendingPathComponent("\(base).txt")
+                    .appendingPathComponent("\(base)-\(id.uuidString.prefix(8)).txt")
                 prepared.append(Prepared(id: id, wav: wav, outputTxt: outputTxt, duration: item.durationSeconds))
-            } catch is CancellationError {
-                setStatus(id, .cancelled)
             } catch {
-                setStatus(id, .failed((error as? LocalizedError)?.errorDescription ?? "音訊準備失敗"))
+                if cancelBox.isCancelled {
+                    setStatus(id, .cancelled)
+                } else {
+                    setStatus(id, .failed((error as? LocalizedError)?.errorDescription ?? "音訊準備失敗"))
+                }
             }
         }
 
-        guard !prepared.isEmpty else {
+        // Stop here if the user cancelled during preparation, or nothing converted.
+        guard !prepared.isEmpty, !cancelBox.isCancelled else {
+            if cancelBox.isCancelled {
+                for p in prepared where isProcessing(items.first(where: { $0.id == p.id })?.status ?? .cancelled) {
+                    setStatus(p.id, .cancelled)
+                }
+            }
             finishBatch(batchID)
             return
         }
@@ -292,8 +341,10 @@ final class FileTranscriptionStore: ObservableObject {
             environment: paths.offlineModelEnvironment
         )
 
+        var exitCode: Int32 = 0
+        var launchFailed = false
         do {
-            _ = try await runner.run(runConfig) { event in
+            exitCode = try await runner.run(runConfig) { event in
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
                         self.handle(event: event, outputByID: outputByID, durationByID: durationByID)
@@ -301,12 +352,24 @@ final class FileTranscriptionStore: ObservableObject {
                 }
             }
         } catch {
+            launchFailed = true
             statusMessage = (error as? LocalizedError)?.errorDescription ?? "轉錄引擎錯誤"
         }
 
-        // Any file left mid-flight (worker terminated by cancel) → cancelled.
+        // Resolve any file still mid-flight. A non-zero exit / launch failure that
+        // is NOT a user cancel means the worker crashed → mark those files failed
+        // (not cancelled), and log the stderr diagnostics (never the transcript).
+        let workerFailed = launchFailed || exitCode != 0
+        if workerFailed && !cancelBox.isCancelled {
+            print("[Transcribe] worker exit=\(exitCode) diagnostics: \(runner.diagnostics.suffix(2000))")
+        }
         for p in prepared {
-            if let item = items.first(where: { $0.id == p.id }), isProcessing(item.status) {
+            guard let item = items.first(where: { $0.id == p.id }), isProcessing(item.status) else { continue }
+            if cancelBox.isCancelled {
+                setStatus(p.id, .cancelled)
+            } else if workerFailed {
+                setStatus(p.id, .failed("轉錄引擎異常結束"))
+            } else {
                 setStatus(p.id, .cancelled)
             }
         }
@@ -331,9 +394,8 @@ final class FileTranscriptionStore: ObservableObject {
             if let id = UUID(uuidString: fileID), let idx = items.firstIndex(where: { $0.id == id }) {
                 items[idx].transcriptURL = outputByID[fileID]
                 items[idx].language = language
-                items[idx].status = truncated
-                    ? .completedWithWarning("部分內容可能不完整")
-                    : .transcriptReady
+                items[idx].truncated = truncated   // tracked separately from notes warnings
+                items[idx].status = .transcriptReady
             }
             asrCompletedDuration += durationByID[fileID] ?? 0
             currentItemDuration = 0

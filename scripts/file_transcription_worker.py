@@ -97,7 +97,7 @@ def run(files: list[dict], context: str, model, transcribe, traditional: bool) -
                 input_wav,
                 model=model,
                 context=context,
-                language="Cantonese",
+                language=None,  # auto-detect (PRD §6); keeps Cantonese, handles EN/mixed
                 return_timestamps=False,
                 diarize=False,
                 return_chunks=False,

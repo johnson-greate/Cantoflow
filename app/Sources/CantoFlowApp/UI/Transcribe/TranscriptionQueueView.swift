@@ -30,7 +30,7 @@ struct TranscriptionQueueView: View {
                 Text(item.displayName)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(item.status.displayText)
+                Text(item.status.displayText + (item.truncated && item.status.hasTranscript ? " · 內容可能不完整" : ""))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

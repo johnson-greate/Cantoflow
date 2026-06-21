@@ -63,6 +63,7 @@ struct AudioPreparationService {
     func prepare(
         _ inputURL: URL,
         to outputURL: URL,
+        isCancelled: () -> Bool = { false },
         onProgress: (Double) -> Void
     ) throws {
         let input: AVAudioFile
@@ -117,7 +118,7 @@ struct AudioPreparationService {
         var readError: Error?
 
         while !reachedEnd {
-            if Task.isCancelled { throw AudioPreparationError.cancelled }
+            if isCancelled() || Task.isCancelled { throw AudioPreparationError.cancelled }
             onProgress(min(Double(input.framePosition) / Double(totalFrames), 1))
 
             guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outputCapacity) else {

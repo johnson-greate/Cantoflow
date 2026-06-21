@@ -157,6 +157,7 @@ struct FileTranscriptionItem: Identifiable, Equatable {
     var transcriptURL: URL?
     var meetingNotesURL: URL?
     var language: String?
+    var truncated: Bool = false
     var createdAt: Date
 
     init(

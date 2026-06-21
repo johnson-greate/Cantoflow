@@ -74,6 +74,9 @@ struct ASRRuntimePaths {
         env["TRANSFORMERS_OFFLINE"] = "1"
         env["HF_HUB_DISABLE_TELEMETRY"] = "1"
         env["HF_HOME"] = hfHome
+        // Override BOTH the new and legacy cache vars so a user-set value
+        // (possibly pointing at a removable volume) can't redirect the cache.
+        env["HF_HUB_CACHE"] = hfHome + "/hub"
         env["HUGGINGFACE_HUB_CACHE"] = hfHome + "/hub"
         return env
     }
@@ -105,10 +108,18 @@ struct ASRRuntimePaths {
             let configFile = qwenModelDirectory.appendingPathComponent("config.json")
             let hasWeights = ((try? fm.contentsOfDirectory(at: qwenModelDirectory, includingPropertiesForKeys: nil)) ?? [])
                 .contains { $0.pathExtension == "safetensors" }
-            let ready = fm.isExecutableFile(atPath: python.path)
+            // load_model also resolves the base repo via the local HF cache at
+            // runtime, so the snapshot must be present — otherwise offline load
+            // fails even though the 8-bit dir looks complete.
+            let baseSnapshot = root.appendingPathComponent(
+                "cache/huggingface/hub/models--Qwen--Qwen3-ASR-0.6B", isDirectory: true)
+            let has8bit = fm.isExecutableFile(atPath: python.path)
                 && fm.fileExists(atPath: configFile.path)
                 && hasWeights
-            return ready
+            if has8bit && !fm.fileExists(atPath: baseSnapshot.path) {
+                return (false, "Qwen 基礎模型未就緒，請到 設定 → Models 重新安裝/修復")
+            }
+            return has8bit
                 ? (true, "已安裝 · Qwen3-ASR 0.6B MLX 8-bit")
                 : (false, "尚未安裝；首次準備需下載並量化模型")
         }
