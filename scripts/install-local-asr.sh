@@ -84,7 +84,7 @@ install_qwen() {
     # "Cannot find an appropriate cached snapshot folder".)
     if [[ -f "$QWEN_DIR/config.json" ]] \
         && find "$QWEN_DIR" -maxdepth 1 -name '*.safetensors' -print -quit | grep -q . \
-        && [[ -d "$HF_HOME/hub/models--Qwen--Qwen3-ASR-0.6B" ]]; then
+        && find "$HF_HOME/hub/models--Qwen--Qwen3-ASR-0.6B/snapshots" -name 'config.json' -print -quit 2>/dev/null | grep -q .; then
         echo "Qwen3-ASR 0.6B 8-bit is already installed."
         return
     fi

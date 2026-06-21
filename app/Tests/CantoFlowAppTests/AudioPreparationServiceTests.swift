@@ -66,6 +66,16 @@ final class AudioPreparationServiceTests: XCTestCase {
         XCTAssertEqual(probe.durationSeconds, 2.0, accuracy: 0.05)
     }
 
+    func testPrepareThrowsWhenCancelled() throws {
+        let source = try makeSourceWAV(sampleRate: 44_100, channels: 1, seconds: 2.0)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let output = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("cf-cancel-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: output) }
+        let service = AudioPreparationService()
+        XCTAssertThrowsError(try service.prepare(source, to: output, isCancelled: { true }) { _ in })
+    }
+
     func testProbeRejectsUndecodable() throws {
         let bogus = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("cf-bogus-\(UUID().uuidString).wav")

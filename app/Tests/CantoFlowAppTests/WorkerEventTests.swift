@@ -42,7 +42,7 @@ final class WorkerEventParserTests: XCTestCase {
 
 final class FileTranscriptionRunnerTests: XCTestCase {
 
-    private func makeFakeWorker(lines: [String]) throws -> URL {
+    private func makeFakeWorker(lines: [String], exitCode: Int = 0) throws -> URL {
         let url = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("cf-fakeworker-\(UUID().uuidString).sh")
         var script = "#!/bin/sh\n"
@@ -50,9 +50,23 @@ final class FileTranscriptionRunnerTests: XCTestCase {
             // single-quote safe: our test lines contain no single quotes
             script += "printf '%s\\n' '\(line)'\n"
         }
+        script += "exit \(exitCode)\n"
         try script.write(to: url, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
         return url
+    }
+
+    func testReturnsNonZeroExitCode() async throws {
+        let worker = try makeFakeWorker(lines: [#"{"v":1,"event":"worker_ready","total_files":1}"#], exitCode: 3)
+        defer { try? FileManager.default.removeItem(at: worker) }
+        let runner = FileTranscriptionRunner()
+        let config = FileTranscriptionRunner.Config(
+            pythonURL: URL(fileURLWithPath: "/bin/sh"), workerScriptURL: worker,
+            manifestURL: URL(fileURLWithPath: "/tmp/m.json"), modelDirURL: URL(fileURLWithPath: "/tmp/model"),
+            outputDirURL: URL(fileURLWithPath: "/tmp"), traditional: false
+        )
+        let code = try await runner.run(config) { _ in }
+        XCTAssertEqual(code, 3)
     }
 
     func testStreamsEventsAndExitsZero() async throws {

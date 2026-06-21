@@ -158,6 +158,7 @@ struct FileTranscriptionItem: Identifiable, Equatable {
     var meetingNotesURL: URL?
     var language: String?
     var truncated: Bool = false
+    var notesFormatWarning: Bool = false
     var createdAt: Date
 
     init(

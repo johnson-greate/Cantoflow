@@ -93,6 +93,13 @@ struct TranscriptDetailView: View {
                     Button { generate(item) } label: { Label("重新生成", systemImage: "arrow.clockwise") }
                 }
                 .padding(12)
+                if item.notesFormatWarning {
+                    Label("會議記錄格式可能不完整，請核對內容", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 4)
+                }
                 ScrollView {
                     Text(notes).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(16)

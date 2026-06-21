@@ -165,10 +165,8 @@ final class FileTranscriptionStore: ObservableObject {
                 guard let i = self.items.firstIndex(where: { $0.id == id }) else { return }
                 let oldNotesURL = self.items[i].meetingNotesURL
                 self.items[i].meetingNotesURL = notesURL
+                self.items[i].notesFormatWarning = result.formatWarning   // persists in UI
                 self.items[i].status = .complete
-                if result.formatWarning {
-                    self.statusMessage = "會議記錄已生成，但格式可能不完整"
-                }
                 // Remove the superseded notes file after the swap.
                 if let oldNotesURL, oldNotesURL != notesURL { try? FileManager.default.removeItem(at: oldNotesURL) }
             } catch {
@@ -361,7 +359,11 @@ final class FileTranscriptionStore: ObservableObject {
         // (not cancelled), and log the stderr diagnostics (never the transcript).
         let workerFailed = launchFailed || exitCode != 0
         if workerFailed && !cancelBox.isCancelled {
-            print("[Transcribe] worker exit=\(exitCode) diagnostics: \(runner.diagnostics.suffix(2000))")
+            // stderr diagnostics only — never the transcript.
+            RuntimeHealthMonitor.shared.record("transcribe_worker_failed", details: [
+                "exit=\(exitCode)",
+                String(runner.diagnostics.suffix(2000))
+            ])
         }
         for p in prepared {
             guard let item = items.first(where: { $0.id == p.id }), isProcessing(item.status) else { continue }

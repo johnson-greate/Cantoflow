@@ -85,6 +85,18 @@ struct ASRRuntimePaths {
     var senseVoiceTokens: URL { senseVoiceDirectory.appendingPathComponent("tokens.txt") }
     var qwenModelDirectory: URL { modelsDirectory.appendingPathComponent(Self.qwenDirectoryName, isDirectory: true) }
 
+    /// True only if the app-local HF cache holds a USABLE snapshot for `repo`
+    /// (a snapshots/<sha> dir containing config.json) — a bare/partial repo
+    /// folder does not count.
+    func hasUsableHFSnapshot(repo: String) -> Bool {
+        let fm = FileManager.default
+        let snapshots = root.appendingPathComponent("cache/huggingface/hub/\(repo)/snapshots", isDirectory: true)
+        guard let dirs = try? fm.contentsOfDirectory(at: snapshots, includingPropertiesForKeys: nil) else {
+            return false
+        }
+        return dirs.contains { fm.fileExists(atPath: $0.appendingPathComponent("config.json").path) }
+    }
+
     func readiness(for engine: STTEngine, config: AppConfig) -> (ready: Bool, message: String) {
         let fm = FileManager.default
 
@@ -109,14 +121,12 @@ struct ASRRuntimePaths {
             let hasWeights = ((try? fm.contentsOfDirectory(at: qwenModelDirectory, includingPropertiesForKeys: nil)) ?? [])
                 .contains { $0.pathExtension == "safetensors" }
             // load_model also resolves the base repo via the local HF cache at
-            // runtime, so the snapshot must be present — otherwise offline load
-            // fails even though the 8-bit dir looks complete.
-            let baseSnapshot = root.appendingPathComponent(
-                "cache/huggingface/hub/models--Qwen--Qwen3-ASR-0.6B", isDirectory: true)
+            // runtime, so a USABLE snapshot must be present — otherwise offline
+            // load fails even though the 8-bit dir looks complete.
             let has8bit = fm.isExecutableFile(atPath: python.path)
                 && fm.fileExists(atPath: configFile.path)
                 && hasWeights
-            if has8bit && !fm.fileExists(atPath: baseSnapshot.path) {
+            if has8bit && !hasUsableHFSnapshot(repo: "models--Qwen--Qwen3-ASR-0.6B") {
                 return (false, "Qwen 基礎模型未就緒，請到 設定 → Models 重新安裝/修復")
             }
             return has8bit
